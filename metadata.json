@@ -1,0 +1,6 @@
+{
+  "name": "SyllabusPilot",
+  "description": "Academic planning agent that extracts graded items from course syllabi (PDF, photo, or text), asks up to 3 scheduling questions, and generates a week-by-week study plan saved as plan.ics via a Python make_ics tool.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

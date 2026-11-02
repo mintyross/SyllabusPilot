@@ -1,0 +1,16 @@
+[
+  {
+    "sample": "bio101.txt",
+    "expected_items": [
+      {"name": "Weekly Homework", "type": "assignment", "due_date": None, "weight": 15},
+      {"name": "Pop Quizzes", "type": "quiz", "due_date": None, "weight": 10},
+      {"name": "Lab Report 1", "type": "lab", "due_date": "2026-09-24", "weight": 5},
+      {"name": "Lab Report 2", "type": "lab", "due_date": "2026-10-15", "weight": 5},
+      {"name": "Lab Report 3", "type": "lab", "due_date": "2026-11-05", "weight": 5},
+      {"name": "Lab Report 4", "type": "lab", "due_date": "2026-11-19", "weight": 5},
+      {"name": "Midterm Exam", "type": "exam", "due_date": "2026-10-21", "weight": 20},
+      {"name": "Term Paper", "type": "paper", "due_date": "2026-12-01", "weight": 15},
+      {"name": "Comprehensive Final Exam", "type": "exam", "due_date": "2026-12-14", "weight": 20}
+    ]
+  }
+]

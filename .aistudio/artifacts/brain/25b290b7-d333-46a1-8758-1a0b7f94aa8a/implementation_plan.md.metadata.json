@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for SyllabusPilot: a multimodal syllabus extraction and study planning agent with inline graded item editing, a maximum of 3 clarifying questions, week-by-week study schedules, backend Python make_ics tool execution to generate plan.ics, and a built-in messy Computer Science sample syllabus.",
+  "updatedAt": "2026-11-02T13:55:42.828845340Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
