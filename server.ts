@@ -1,21 +1,210 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { spawn, execFileSync } from 'child_process';
 import { FunctionDeclaration, GoogleGenAI, Type } from '@google/genai';
-import { MESSY_CS_PRELOADED_EXTRACTION, DEFAULT_CS3410_STUDY_PLAN } from './src/data/messySyllabus';
+
+const envPath = path.resolve(import.meta.dirname, '.env');
+dotenv.config({ path: envPath, override: true });
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json({ limit: '25mb' }));
 
+function getGeminiApiKey(): string {
+  return (
+    process.env.GEMINI_API_KEY?.trim() ||
+    process.env.GOOGLE_API_KEY?.trim() ||
+    process.env.GOOGLE_GENAI_API_KEY?.trim() ||
+    ''
+  );
+}
+
 function getAiClient(): GoogleGenAI {
-  return new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENAI_API_KEY,
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      `Missing Gemini API key. Add GEMINI_API_KEY to ${envPath} and restart the server.`,
+    );
+  }
+  return new GoogleGenAI({ apiKey });
+}
+
+const GEMINI_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-flash-latest',
+  'gemini-3-flash-preview',
+];
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
   });
+}
+
+async function generateJsonFromGemini(params: {
+  ai: GoogleGenAI;
+  contents: any;
+  schema: any;
+  label: string;
+}): Promise<any> {
+  let lastError: Error | null = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`[${params.label}] Trying model ${model}...`);
+      const response: any = await withTimeout(
+        params.ai.models.generateContent({
+          model,
+          contents: params.contents,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: params.schema,
+          },
+        }),
+        25000,
+        `${model} timed out after 25 seconds`,
+      );
+      const parsed = JSON.parse((response.text ?? '{}').trim());
+      console.log(`[${params.label}] Success with ${model}`);
+      return parsed;
+    } catch (err: any) {
+      lastError = err instanceof Error ? err : new Error(String(err?.message || err));
+      console.warn(`[${params.label}] Model ${model} failed: ${lastError.message}`);
+    }
+  }
+  throw lastError || new Error(`All Gemini models failed for ${params.label}`);
+}
+
+function addDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfWeekMonday(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const weekday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - weekday);
+  return date.toISOString().slice(0, 10);
+}
+
+function parseWeeklyHours(questions: any[]): number {
+  const blob = JSON.stringify(questions || []);
+  const match = blob.match(/(\d+)\s*(?:hours?|hrs?)/i);
+  const hours = match ? Number(match[1]) : 8;
+  return Math.min(20, Math.max(4, hours));
+}
+
+function buildLocalStudyPlan(course: any, gradedItems: any[], questions: any[]) {
+  const datedItems = [...gradedItems]
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(String(item.dueDate)))
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const weeklyHours = parseWeeklyHours(questions);
+  const startDate =
+    course?.semesterStartDate && /^\d{4}-\d{2}-\d{2}$/.test(course.semesterStartDate)
+      ? course.semesterStartDate
+      : datedItems[0]?.dueDate || new Date().toISOString().slice(0, 10);
+  const endDate =
+    course?.semesterEndDate && /^\d{4}-\d{2}-\d{2}$/.test(course.semesterEndDate)
+      ? course.semesterEndDate
+      : datedItems[datedItems.length - 1]?.dueDate || addDays(startDate, 84);
+
+  const events: any[] = [];
+  for (const item of datedItems) {
+    const due = String(item.dueDate);
+    const isExam = String(item.category) === 'Exam';
+    events.push({
+      id: `due-${item.id}`,
+      title: `${isExam ? 'EXAM' : 'DUE'}: ${item.title} (${item.weightPercent}%)`,
+      start: `${due}T${isExam ? '10:00' : '23:59'}`,
+      end: `${due}T${isExam ? '11:30' : '23:59'}`,
+      duration_hours: isExam ? 1.5 : 0.5,
+      description: item.details || `${item.category} due ${due}`,
+      location: isExam ? 'Exam location' : 'Course submission',
+      category: 'due_date',
+    });
+    const studyDate = addDays(due, -3);
+    events.push({
+      id: `study-${item.id}`,
+      title: `Study: ${item.title}`,
+      start: `${studyDate}T18:30`,
+      end: `${studyDate}T20:30`,
+      duration_hours: 2,
+      description: `Prep block for ${item.title} (${item.weightPercent}% of grade).`,
+      location: 'Study desk',
+      category: 'study_session',
+    });
+  }
+
+  const weeks: any[] = [];
+  let weekStart = startOfWeekMonday(startDate);
+  let weekNumber = 1;
+  while (weekStart <= endDate && weekNumber <= 16) {
+    const weekEnd = addDays(weekStart, 6);
+    const dueThisWeek = datedItems.filter(
+      (item) => item.dueDate >= weekStart && item.dueDate <= weekEnd,
+    );
+    const tasks = dueThisWeek.map((item: any, idx: number) => ({
+      id: `task-${weekNumber}-${idx}`,
+      title: `Finish ${item.title}`,
+      relatedItemTitle: item.title,
+      estimatedHours: Math.max(1, Math.round((Number(item.weightPercent) || 5) / 5)),
+      suggestedDay: item.dueDate,
+      priority: Number(item.weightPercent) >= 15 ? 'High' : 'Medium',
+      notes: item.details || `Due ${item.dueDate}`,
+    }));
+    if (tasks.length === 0) {
+      tasks.push({
+        id: `task-${weekNumber}-review`,
+        title: `Review ${course?.courseCode || 'course'} notes`,
+        relatedItemTitle: course?.courseTitle || 'Course',
+        estimatedHours: Math.max(1, Math.round(weeklyHours / 4)),
+        suggestedDay: addDays(weekStart, 1),
+        priority: 'Standard',
+        notes: 'Keep up with readings and lecture notes this week.',
+      });
+    }
+    weeks.push({
+      weekNumber,
+      dateRange: `${weekStart} to ${weekEnd}`,
+      theme: dueThisWeek.length
+        ? `Due: ${dueThisWeek.map((item: any) => item.title).join(', ')}`
+        : `${course?.courseCode || 'Course'} catch-up week`,
+      totalHours: tasks.reduce((sum: number, task: any) => sum + Number(task.estimatedHours || 0), 0),
+      milestonesDue: dueThisWeek.map((item: any) => item.title),
+      tasks,
+    });
+    weekStart = addDays(weekStart, 7);
+    weekNumber += 1;
+  }
+
+  return {
+    agentSummary: `Study plan for ${course?.courseCode || 'this course'}: ${datedItems.length} deadlines mapped onto weekly sessions.`,
+    studyStrategyNotes: [
+      `Budget about ${weeklyHours} hours per week.`,
+      'Work on high-weight items at least 3 days before they are due.',
+      'Use the calendar due-date markers as hard stop times.',
+    ],
+    weeks,
+    events,
+  };
 }
 
 // Declaration for the Python make_ics tool function
@@ -285,7 +474,7 @@ ${text?.trim() ? `\n--- SYLLABUS TEXT ---\n${text.trim()}` : ''}`;
 
     parts.push({ text: extractionPrompt });
 
-    console.log('[Extract] Sending syllabus to Gemini 3.8 Flash...');
+    console.log('[Extract] Sending syllabus to Gemini...');
     const startTime = Date.now();
 
     const extractionSchema = {
@@ -366,45 +555,23 @@ ${text?.trim() ? `\n--- SYLLABUS TEXT ---\n${text.trim()}` : ''}`;
       required: ['course', 'gradedItems', 'questions'],
     };
 
-    async function callGeminiExtract(): Promise<any> {
-      for (const model of [
-        'gemini-3.8-flash',
-        'gemini-3.1-pro-preview',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
-        'gemini-flash-latest',
-      ]) {
-        try {
-          console.log(`[Extract] Trying model ${model}...`);
-          const res = await ai.models.generateContent({
-            model,
-            contents: parts,
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: extractionSchema,
-            },
-          });
-          return res;
-        } catch (mErr: any) {
-          console.warn(`[Extract] Model ${model} returned: ${mErr?.message || mErr}`);
-        }
-      }
-      throw new Error('All Gemini model endpoints failed');
-    }
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API call timed out after 15 seconds')), 15000)
-    );
-
     let parsed: any;
     try {
-      const response: any = await Promise.race([callGeminiExtract(), timeoutPromise]);
-      const rawJson = (response.text ?? '{}').trim();
-      parsed = JSON.parse(rawJson);
-      console.log(`[Extract] Success from Gemini in ${((Date.now() - startTime) / 1000).toFixed(1)}s!`);
+      parsed = await generateJsonFromGemini({
+        ai,
+        contents: parts,
+        schema: extractionSchema,
+        label: 'Extract',
+      });
+      console.log(`[Extract] Success in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     } catch (genError: any) {
-      console.warn(`[Extract] Notice: Gemini API (${genError?.message}). Using instant fallback.`);
-      parsed = JSON.parse(JSON.stringify(MESSY_CS_PRELOADED_EXTRACTION));
+      console.error(`[Extract] Gemini failed: ${genError?.message}`);
+      res.status(503).json({
+        error:
+          genError?.message ||
+          'Could not extract this syllabus. Check GEMINI_API_KEY and try again.',
+      });
+      return;
     }
 
     // Enforce hard cap of at most 3 questions
@@ -454,7 +621,7 @@ INSTRUCTIONS:
    - Include concrete recurring/weekly study blocks (\`category: "study_session"\`) with realistic \`start\` and \`end\` ISO timestamps (\`YYYY-MM-DDTHH:MM\`) matching the student's preferred days/times.
    - Include every graded item deadline (\`category: "due_date"\`) on its due date so the student has both study sessions and deadline reminders in \`plan.ics\`.`;
 
-    console.log('[Plan] Generating week-by-week study plan with Gemini 3.8 Flash...');
+    console.log('[Plan] Generating week-by-week study plan...');
     const startTime = Date.now();
 
     const planSchema = {
@@ -553,44 +720,18 @@ INSTRUCTIONS:
       required: ['agentSummary', 'studyStrategyNotes', 'weeks', 'events'],
     };
 
-    async function callGeminiPlan(): Promise<any> {
-      for (const model of [
-        'gemini-3.8-flash',
-        'gemini-3.1-pro-preview',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
-        'gemini-flash-latest',
-      ]) {
-        try {
-          console.log(`[Plan] Trying model ${model}...`);
-          const res = await ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: planSchema,
-            },
-          });
-          return res;
-        } catch (mErr: any) {
-          console.warn(`[Plan] Model ${model} returned: ${mErr?.message || mErr}`);
-        }
-      }
-      throw new Error('All Gemini model endpoints failed');
-    }
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Plan generation timed out after 15 seconds')), 15000)
-    );
-
     let parsedPlan: any;
     try {
-      const response: any = await Promise.race([callGeminiPlan(), timeoutPromise]);
-      parsedPlan = JSON.parse((response.text ?? '{}').trim());
-      console.log(`[Plan] Plan successfully generated in ${((Date.now() - startTime) / 1000).toFixed(1)}s!`);
+      parsedPlan = await generateJsonFromGemini({
+        ai,
+        contents: prompt,
+        schema: planSchema,
+        label: 'Plan',
+      });
+      console.log(`[Plan] Success in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     } catch (genError: any) {
-      console.warn(`[Plan] Notice: Gemini API (${genError?.message}). Using instant demo fallback.`);
-      parsedPlan = JSON.parse(JSON.stringify(DEFAULT_CS3410_STUDY_PLAN));
+      console.warn(`[Plan] Gemini failed (${genError?.message}). Building a local calendar from the graded items.`);
+      parsedPlan = buildLocalStudyPlan(course, gradedItems, questions);
     }
     const events = Array.isArray(parsedPlan.events) ? parsedPlan.events : [];
 
@@ -694,6 +835,11 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`SyllabusPilot server running on http://localhost:${PORT}`);
+    console.log(
+      getGeminiApiKey()
+        ? 'Gemini API key loaded from environment.'
+        : `Gemini API key missing. Set GEMINI_API_KEY in ${envPath}`,
+    );
   });
 }
 

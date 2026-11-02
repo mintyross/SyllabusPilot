@@ -195,8 +195,104 @@ export default function App() {
     showToast('Generated sample syllabus photo for testing.');
   };
 
+  const applyExtraction = (data: {
+    course?: CourseMetadata;
+    gradedItems?: GradedItem[];
+    questions?: AgentQuestion[];
+  }) => {
+    if (data.course) setCourse(data.course);
+    if (Array.isArray(data.gradedItems)) {
+      setGradedItems(
+        data.gradedItems.map((item: GradedItem, i: number) => ({
+          ...item,
+          id: item.id || `item-${Date.now()}-${i}`,
+          weightPercent: Number(item.weightPercent) || 0,
+        }))
+      );
+    }
+    if (Array.isArray(data.questions)) {
+      setQuestions(
+        data.questions.slice(0, 3).map((q: AgentQuestion, i: number) => ({
+          ...q,
+          id: q.id || `q-${i + 1}`,
+          answer: q.answer || q.quickOptions?.[0] || '',
+        }))
+      );
+    }
+    setCategoryFilter('All');
+    setCompletedTaskIds({});
+  };
+
+  const applyStudyPlan = (data: StudyPlanResult) => {
+    setStudyPlan(data);
+    if (Array.isArray(data.events) && data.events.length > 0) {
+      const firstDateStr = String(data.events[0].start || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(firstDateStr)) {
+        const [y, m] = firstDateStr.split('-').map(Number);
+        setCurrentMonth({ year: y, month: m - 1 });
+        setSelectedDateStr(firstDateStr);
+      }
+    }
+    setPlanViewMode('calendar');
+  };
+
+  const processSyllabus = async (payload: {
+    text?: string;
+    file?: { mimeType: string; base64Data: string; fileName?: string };
+  }) => {
+    setErrorMessage(null);
+    setIsExtracting(true);
+    setIsGeneratingPlan(false);
+
+    try {
+      const extractResponse = await fetch('/api/syllabus/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const extractData = await extractResponse.json();
+      if (!extractResponse.ok) {
+        throw new Error(extractData.error || 'Failed to parse syllabus.');
+      }
+
+      applyExtraction(extractData);
+      setActiveStage('review');
+      showToast(
+        `Extracted ${Array.isArray(extractData.gradedItems) ? extractData.gradedItems.length : 0} graded items from ${extractData.course?.courseCode || 'your syllabus'}.`
+      );
+
+      setIsExtracting(false);
+      setIsGeneratingPlan(true);
+
+      const planResponse = await fetch('/api/syllabus/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          course: extractData.course,
+          gradedItems: extractData.gradedItems,
+          questions: Array.isArray(extractData.questions) ? extractData.questions.slice(0, 3) : [],
+        }),
+      });
+      const planData = await planResponse.json();
+      if (!planResponse.ok) {
+        throw new Error(planData.error || 'Failed to generate study plan.');
+      }
+
+      applyStudyPlan(planData);
+      setActiveStage('plan');
+      showToast(`Updated study calendar for ${extractData.course?.courseCode || 'your syllabus'}.`);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Could not process this syllabus.');
+      setActiveStage('input');
+    } finally {
+      setIsExtracting(false);
+      setIsGeneratingPlan(false);
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     const validTypes = [
@@ -206,89 +302,53 @@ export default function App() {
       'image/jpg',
       'image/webp',
     ];
-    if (!validTypes.includes(file.type)) {
+    if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith('.pdf')) {
       setErrorMessage('Please upload a PDF or an image (PNG, JPG, WEBP).');
       return;
     }
+
+    const mimeType =
+      file.type ||
+      (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : file.type);
 
     const reader = new FileReader();
     reader.onload = () => {
       const result = String(reader.result || '');
       const base64Data = result.includes(',') ? result.split(',')[1] : result;
-      setUploadedFile({
+      const nextFile = {
         fileName: file.name,
-        mimeType: file.type,
+        mimeType,
         base64Data,
-        previewUrl: file.type.startsWith('image/') ? result : undefined,
+        previewUrl: mimeType.startsWith('image/') ? result : undefined,
         sizeKb: Math.max(1, Math.round(file.size / 1024)),
-      });
+      };
+      setUploadedFile(nextFile);
       setInputMode('upload');
       setErrorMessage(null);
-      showToast(`Attached ${file.name}`);
+      showToast(`Reading ${file.name}...`);
+      void processSyllabus({
+        file: {
+          mimeType: nextFile.mimeType,
+          base64Data: nextFile.base64Data,
+          fileName: nextFile.fileName,
+        },
+      });
     };
     reader.readAsDataURL(file);
   };
 
-  // Extract Graded Items & <=3 Questions via Gemini
   const handleExtractSyllabus = async () => {
-    setErrorMessage(null);
-    setIsExtracting(true);
-
-    try {
-      const payload: {
-        text?: string;
-        file?: { mimeType: string; base64Data: string; fileName?: string };
-      } = {};
-
-      if (inputMode === 'upload' && uploadedFile) {
-        payload.file = {
+    if (inputMode === 'upload' && uploadedFile) {
+      await processSyllabus({
+        file: {
           mimeType: uploadedFile.mimeType,
           base64Data: uploadedFile.base64Data,
           fileName: uploadedFile.fileName,
-        };
-        if (syllabusText.trim()) payload.text = syllabusText;
-      } else {
-        payload.text = syllabusText;
-      }
-
-      const response = await fetch('/api/syllabus/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        },
       });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to parse syllabus.');
-      }
-
-      if (data.course) setCourse(data.course);
-      if (Array.isArray(data.gradedItems)) {
-        setGradedItems(
-          data.gradedItems.map((item: GradedItem, i: number) => ({
-            ...item,
-            id: item.id || `item-${Date.now()}-${i}`,
-            weightPercent: Number(item.weightPercent) || 0,
-          }))
-        );
-      }
-      if (Array.isArray(data.questions)) {
-        setQuestions(
-          data.questions.slice(0, 3).map((q: AgentQuestion, i: number) => ({
-            ...q,
-            id: q.id || `q-${i + 1}`,
-            answer: q.answer || q.quickOptions?.[0] || '',
-          }))
-        );
-      }
-
-      setActiveStage('review');
-      showToast('Extracted graded items and 3 questions.');
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Could not extract syllabus items.');
-    } finally {
-      setIsExtracting(false);
+      return;
     }
+    await processSyllabus({ text: syllabusText });
   };
 
   // Graded Items Table Editing
@@ -391,18 +451,8 @@ export default function App() {
         throw new Error(data.error || 'Failed to generate study plan.');
       }
 
-      setStudyPlan(data);
-      // Jump calendar to first event's month
-      if (Array.isArray(data.events) && data.events.length > 0) {
-        const firstDateStr = String(data.events[0].start || '').slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(firstDateStr)) {
-          const [y, m] = firstDateStr.split('-').map(Number);
-          setCurrentMonth({ year: y, month: m - 1 });
-          setSelectedDateStr(firstDateStr);
-        }
-      }
+      applyStudyPlan(data);
       setActiveStage('plan');
-      setPlanViewMode('calendar');
       showToast('Created study calendar and saved plan.ics with Python make_ics!');
     } catch (err: any) {
       setErrorMessage(err?.message || 'Error generating study plan.');
@@ -754,16 +804,49 @@ export default function App() {
                       className="hidden"
                     />
                     <div
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => !isExtracting && !isGeneratingPlan && fileInputRef.current?.click()}
                       className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 rounded-xl p-10 text-center cursor-pointer transition-colors bg-slate-50/60 dark:bg-slate-950/50"
                     >
-                      <FileUp className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mx-auto mb-2" />
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        Click to select a PDF or Photo of your syllabus
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Supports PDF, PNG, JPG, or WEBP
-                      </p>
+                      {isExtracting || isGeneratingPlan ? (
+                        <>
+                          <RefreshCw className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mx-auto mb-2 animate-spin" />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {isExtracting
+                              ? `Extracting graded items from ${uploadedFile?.fileName || 'your syllabus'}...`
+                              : 'Building your study calendar...'}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            The calendar and graded items will replace the sample CS 3410 plan.
+                          </p>
+                        </>
+                      ) : uploadedFile ? (
+                        <>
+                          <FileUp className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mx-auto mb-2" />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {uploadedFile.fileName}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {uploadedFile.sizeKb} KB · Click to upload a different syllabus
+                          </p>
+                          {uploadedFile.previewUrl && (
+                            <img
+                              src={uploadedFile.previewUrl}
+                              alt="Uploaded syllabus preview"
+                              className="mt-4 mx-auto max-h-48 rounded-lg border border-slate-200 dark:border-slate-800"
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <FileUp className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mx-auto mb-2" />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Click to select a PDF or Photo of your syllabus
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Supports PDF, PNG, JPG, or WEBP. Upload starts extraction automatically.
+                          </p>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between">
@@ -797,13 +880,13 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleExtractSyllabus}
-                    disabled={isExtracting}
+                    disabled={isExtracting || isGeneratingPlan || (inputMode === 'upload' && !uploadedFile)}
                     className="px-5 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
                   >
-                    {isExtracting ? (
+                    {isExtracting || isGeneratingPlan ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        Extracting Graded Items...
+                        {isExtracting ? 'Extracting Graded Items...' : 'Updating Calendar...'}
                       </>
                     ) : (
                       <>
