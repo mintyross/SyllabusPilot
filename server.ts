@@ -7,13 +7,13 @@ import { spawn, execFileSync } from 'child_process';
 import { FunctionDeclaration, GoogleGenAI, Type } from '@google/genai';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json({ limit: '25mb' }));
 
 function getAiClient(): GoogleGenAI {
   return new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENAI_API_KEY,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -150,7 +150,13 @@ function buildFallbackIcs(events: any[], filename = 'plan.ics'): string {
   lines.push('END:VCALENDAR');
   const content = lines.join('\r\n') + '\r\n';
   const outPath = path.resolve(process.cwd(), path.basename(filename || 'plan.ics'));
-  fs.writeFileSync(outPath, content, 'utf-8');
+  try {
+    if (!fs.existsSync(outPath) || fs.readFileSync(outPath, 'utf-8') !== content) {
+      fs.writeFileSync(outPath, content, 'utf-8');
+    }
+  } catch {
+    fs.writeFileSync(outPath, content, 'utf-8');
+  }
   return content;
 }
 
@@ -161,11 +167,19 @@ async function runPythonMakeIcs(
   const scriptPath = path.resolve(process.cwd(), 'make_ics.py');
   const safeFilename = path.basename(filename || 'plan.ics');
 
+  const pythonCmds = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let selectedPython = '';
   let pythonVersion = 'Python 3';
-  try {
-    pythonVersion = execFileSync('python3', ['--version'], { encoding: 'utf-8' }).trim();
-  } catch {
-    // Fallback if python3 is unavailable
+  for (const cmd of pythonCmds) {
+    try {
+      pythonVersion = execFileSync(cmd, ['--version'], { encoding: 'utf-8' }).trim();
+      selectedPython = cmd;
+      break;
+    } catch {}
+  }
+
+  if (!selectedPython) {
+    // Fallback if python is unavailable
     const fallbackContent = buildFallbackIcs(events, safeFilename);
     return {
       icsContent: fallbackContent,
@@ -175,7 +189,7 @@ async function runPythonMakeIcs(
   }
 
   return new Promise((resolve) => {
-    const child = spawn('python3', [scriptPath], {
+    const child = spawn(selectedPython, [scriptPath], {
       cwd: process.cwd(),
     });
 
