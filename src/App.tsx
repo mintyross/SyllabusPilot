@@ -1,3 +1,6 @@
+// @refresh reset
+// ^ Tells Vite/React Fast Refresh to remount App on every edit instead of keeping
+//   old useState values, so stale data never survives a code change during dev.
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   FileText,
@@ -12,7 +15,6 @@ import {
   Sparkles,
   Clock,
   RefreshCw,
-  Image as ImageIcon,
   FileUp,
   Sun,
   Moon,
@@ -39,14 +41,8 @@ import {
   CourseMetadata,
   StudyPlanResult,
   CalendarEventItem,
+  SyllabusExtractionResult,
 } from './types';
-import {
-  MESSY_CS_SYLLABUS_TEXT,
-  MESSY_CS_SYLLABUS_TITLE,
-  MESSY_CS_SYLLABUS_HIGHLIGHTS,
-  MESSY_CS_PRELOADED_EXTRACTION,
-  DEFAULT_CS3410_STUDY_PLAN,
-} from './data/messySyllabus';
 
 type ActiveStage = 'input' | 'review' | 'plan';
 type InputMode = 'text' | 'upload';
@@ -64,15 +60,129 @@ const CATEGORIES: GradedItemCategory[] = [
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+const EMPTY_COURSE: CourseMetadata = {
+  courseCode: '',
+  courseTitle: '',
+  term: '',
+  instructor: '',
+  semesterStartDate: '',
+  semesterEndDate: '',
+  gradingPolicySummary: '',
+};
+
+const EMPTY_STUDY_PLAN: StudyPlanResult = {
+  agentSummary: '',
+  studyStrategyNotes: [],
+  weeks: [],
+  events: [],
+  icsContent: '',
+  pythonSource: '',
+  toolTrace: {
+    functionName: 'make_ics',
+    filename: 'plan.ics',
+    eventCount: 0,
+    executedWithPython: false,
+    executedAt: '',
+    sampleInvocationCode: '',
+  },
+};
+
+const TODAY = new Date();
+const TODAY_ISO = `${TODAY.getFullYear()}-${String(TODAY.getMonth() + 1).padStart(2, '0')}-${String(TODAY.getDate()).padStart(2, '0')}`;
+
+// Parses a fetch response as JSON, turning non-JSON replies (HTML error pages,
+// empty bodies) into a readable error instead of a cryptic SyntaxError.
+async function readJsonResponse(response: Response, label: string): Promise<any> {
+  const raw = await response.text();
+  let data: any = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    console.error(`[${label}] Non-JSON response (HTTP ${response.status}):`, raw.slice(0, 500));
+    throw new Error(`${label} failed: server returned HTTP ${response.status} ${response.statusText} (not JSON). See the server terminal.`);
+  }
+  if (!response.ok) {
+    const msg = data?.error || `${label} failed with HTTP ${response.status}`;
+    console.error(`[${label}] HTTP ${response.status}:`, msg, data);
+    const err = new Error(msg) as Error & { body?: unknown; status?: number };
+    err.body = data;
+    err.status = response.status;
+    throw err;
+  }
+  if (!data) throw new Error(`${label} failed: server returned an empty response.`);
+  return data;
+}
+
+// What the browser sent and what came back for the most recent extraction attempt.
+type RawExtractionRecord = {
+  request: Record<string, unknown>;
+  status: number | string;
+  ok: boolean;
+  body: any;
+  at: string;
+};
+
+function RawExtractionPanel({ record }: { record: RawExtractionRecord }) {
+  const meta = record.body?.meta;
+  const attempts: Array<{ model: string; ok: boolean; ms: number; error?: string }> =
+    meta?.attempts || record.body?.attempts || [];
+  const sentToModel = meta?.sentToModel || record.body?.sentToModel;
+  const rawModelText: string | undefined = meta?.rawModelText;
+  const section = 'text-[11px] leading-snug font-mono p-3 rounded-lg bg-slate-950 text-slate-100 overflow-x-auto max-h-80 whitespace-pre-wrap break-all';
+
+  return (
+    <details className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 group">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-900 dark:text-slate-100 font-display select-none">
+        Raw extraction{' '}
+        <span className={`ml-2 text-xs font-mono ${record.ok ? 'text-emerald-600' : 'text-red-600'}`}>
+          HTTP {record.status} · {new Date(record.at).toLocaleTimeString()}
+        </span>
+      </summary>
+      <div className="mt-4 space-y-4 text-xs">
+        <div>
+          <p className="text-slate-500 mb-1">1. Sent by the browser to /api/syllabus/extract</p>
+          <pre className={section}>{JSON.stringify(record.request, null, 2)}</pre>
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">2. Sent by the server to Gemini (document fingerprint)</p>
+          <pre className={section}>{sentToModel ? JSON.stringify(sentToModel, null, 2) : '(server did not report this)'}</pre>
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">3. Gemini models tried</p>
+          {attempts.length ? (
+            <ul className="space-y-1 font-mono">
+              {attempts.map((a, i) => (
+                <li key={i} className={a.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>
+                  {a.ok ? 'OK  ' : 'FAIL'} {a.model} ({(a.ms / 1000).toFixed(1)}s){a.error ? ` - ${a.error}` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-slate-500">(server did not report this)</p>
+          )}
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">4. Raw text returned by Gemini</p>
+          <pre className={section}>{rawModelText || '(none - the request failed before Gemini answered)'}</pre>
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">5. Full server response body</p>
+          <pre className={section}>{JSON.stringify(record.body, null, 2)}</pre>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(false);
-  const [activeStage, setActiveStage] = useState<ActiveStage>('plan');
+  const [activeStage, setActiveStage] = useState<ActiveStage>('input');
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [planViewMode, setPlanViewMode] = useState<PlanViewMode>('calendar');
   const [distributionView, setDistributionView] = useState<'chart' | 'list'>('chart');
 
   // Stage 1: Syllabus Input State
-  const [syllabusText, setSyllabusText] = useState<string>(MESSY_CS_SYLLABUS_TEXT);
+  const [syllabusText, setSyllabusText] = useState<string>('');
   const [uploadedFile, setUploadedFile] = useState<{
     fileName: string;
     mimeType: string;
@@ -83,22 +193,22 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Stage 2: Extracted Graded Items & <=3 Questions State
-  const [course, setCourse] = useState<CourseMetadata>(MESSY_CS_PRELOADED_EXTRACTION.course);
-  const [gradedItems, setGradedItems] = useState<GradedItem[]>(
-    MESSY_CS_PRELOADED_EXTRACTION.gradedItems
-  );
-  const [questions, setQuestions] = useState<AgentQuestion[]>(
-    MESSY_CS_PRELOADED_EXTRACTION.questions
-  );
+  const [course, setCourse] = useState<CourseMetadata>(EMPTY_COURSE);
+  const [gradedItems, setGradedItems] = useState<GradedItem[]>([]);
+  const [questions, setQuestions] = useState<AgentQuestion[]>([]);
+  // Raw extraction response from the server (null until a real extraction succeeds)
+  const [lastExtraction, setLastExtraction] = useState<SyllabusExtractionResult | null>(null);
+  const [rawExtraction, setRawExtraction] = useState<RawExtractionRecord | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
 
   // Stage 3: Study Plan & Visual Calendar State
-  const [studyPlan, setStudyPlan] = useState<StudyPlanResult>(DEFAULT_CS3410_STUDY_PLAN);
+  const [studyPlan, setStudyPlan] = useState<StudyPlanResult>(EMPTY_STUDY_PLAN);
+  const [hasStudyPlan, setHasStudyPlan] = useState<boolean>(false);
   const [currentMonth, setCurrentMonth] = useState<{ year: number; month: number }>({
-    year: 2026,
-    month: 9, // 0-indexed: 9 = October 2026 (Midterm & Kernel M1 month)
+    year: TODAY.getFullYear(),
+    month: TODAY.getMonth(),
   });
-  const [selectedDateStr, setSelectedDateStr] = useState<string>('2026-10-16');
+  const [selectedDateStr, setSelectedDateStr] = useState<string>(TODAY_ISO);
   const [completedTaskIds, setCompletedTaskIds] = useState<Record<string, boolean>>({});
 
   // Loading & Feedback States
@@ -107,32 +217,6 @@ export default function App() {
   const [isReRunningIcs, setIsReRunningIcs] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusToast, setStatusToast] = useState<string | null>(null);
-
-  // Ensure plan.ics is generated on backend on initial mount so download is always ready
-  useEffect(() => {
-    fetch('/api/syllabus/make-ics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        events: DEFAULT_CS3410_STUDY_PLAN.events,
-        filename: 'plan.ics',
-      }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.icsContent) {
-          setStudyPlan((prev) => ({
-            ...prev,
-            icsContent: data.icsContent,
-            pythonSource: data.pythonSource || prev.pythonSource,
-            toolTrace: data.toolTrace || prev.toolTrace,
-          }));
-        }
-      })
-      .catch(() => {
-        // Fallback already in DEFAULT_CS3410_STUDY_PLAN
-      });
-  }, []);
 
   const toggleDarkMode = () => {
     const next = !darkMode;
@@ -151,80 +235,34 @@ export default function App() {
     }, 3200);
   };
 
-  // Generate sample photographed syllabus handout on Canvas
-  const handleGenerateSamplePhoto = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1000;
-    canvas.height = 1250;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.fillStyle = '#f8f6f0';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.strokeStyle = '#d6d3c9';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(32, 32, canvas.width - 64, canvas.height - 64);
-
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 22px monospace';
-    ctx.fillText('CS 3410: OPERATING SYSTEMS & SYSTEMS PROGRAMMING (FALL 2026)', 56, 80);
-
-    ctx.font = '15px monospace';
-    ctx.fillStyle = '#334155';
-    const lines = MESSY_CS_SYLLABUS_TEXT.split('\n');
-    let y = 120;
-    for (const line of lines) {
-      if (line.startsWith('===')) continue;
-      ctx.fillText(line.slice(0, 82), 56, y);
-      y += 24;
-      if (y > 1180) break;
-    }
-
-    const dataUrl = canvas.toDataURL('image/png');
-    const base64Data = dataUrl.split(',')[1] || '';
-
-    setInputMode('upload');
-    setUploadedFile({
-      fileName: 'cs3410_syllabus_handout_photo.png',
-      mimeType: 'image/png',
-      base64Data,
-      previewUrl: dataUrl,
-      sizeKb: Math.round((base64Data.length * 3) / 4 / 1024),
-    });
-    showToast('Generated sample syllabus photo for testing.');
-  };
-
-  const applyExtraction = (data: {
-    course?: CourseMetadata;
-    gradedItems?: GradedItem[];
-    questions?: AgentQuestion[];
-  }) => {
-    if (data.course) setCourse(data.course);
-    if (Array.isArray(data.gradedItems)) {
-      setGradedItems(
-        data.gradedItems.map((item: GradedItem, i: number) => ({
-          ...item,
-          id: item.id || `item-${Date.now()}-${i}`,
-          weightPercent: Number(item.weightPercent) || 0,
-        }))
-      );
-    }
-    if (Array.isArray(data.questions)) {
-      setQuestions(
-        data.questions.slice(0, 3).map((q: AgentQuestion, i: number) => ({
-          ...q,
-          id: q.id || `q-${i + 1}`,
-          answer: q.answer || q.quickOptions?.[0] || '',
-        }))
-      );
-    }
+  const applyExtraction = (data: SyllabusExtractionResult) => {
+    // Always replace state with exactly what the server returned - no merging with old data.
+    setCourse({ ...EMPTY_COURSE, ...(data.course || {}) });
+    setGradedItems(
+      (Array.isArray(data.gradedItems) ? data.gradedItems : []).map((item: GradedItem, i: number) => ({
+        ...item,
+        id: item.id || `item-${Date.now()}-${i}`,
+        weightPercent: Number(item.weightPercent) || 0,
+      }))
+    );
+    setQuestions(
+      (Array.isArray(data.questions) ? data.questions : []).slice(0, 3).map((q: AgentQuestion, i: number) => ({
+        ...q,
+        id: q.id || `q-${i + 1}`,
+        answer: q.answer || q.quickOptions?.[0] || '',
+      }))
+    );
+    setLastExtraction(data);
     setCategoryFilter('All');
     setCompletedTaskIds({});
+    // A new extraction invalidates any previously generated plan.
+    setStudyPlan(EMPTY_STUDY_PLAN);
+    setHasStudyPlan(false);
   };
 
   const applyStudyPlan = (data: StudyPlanResult) => {
-    setStudyPlan(data);
+    setStudyPlan({ ...EMPTY_STUDY_PLAN, ...data });
+    setHasStudyPlan(true);
     if (Array.isArray(data.events) && data.events.length > 0) {
       const firstDateStr = String(data.events[0].start || '').slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(firstDateStr)) {
@@ -236,6 +274,8 @@ export default function App() {
     setPlanViewMode('calendar');
   };
 
+  // Step 1 -> Step 2: send the syllabus to Gemini and show exactly what came back.
+  // Stops on the review page so the extraction can be verified before planning.
   const processSyllabus = async (payload: {
     text?: string;
     file?: { mimeType: string; base64Data: string; fileName?: string };
@@ -244,44 +284,76 @@ export default function App() {
     setIsExtracting(true);
     setIsGeneratingPlan(false);
 
+    // Clear everything from any previous upload first, so a failure can never
+    // leave an older result on screen that looks like it came from this file.
+    setLastExtraction(null);
+    setCourse(EMPTY_COURSE);
+    setGradedItems([]);
+    setQuestions([]);
+    setStudyPlan(EMPTY_STUDY_PLAN);
+    setHasStudyPlan(false);
+    setRawExtraction(null);
+
+    const requestSummary: Record<string, unknown> = payload.file
+      ? {
+          kind: 'file',
+          fileName: payload.file.fileName,
+          mimeType: payload.file.mimeType,
+          base64Length: payload.file.base64Data.length,
+          approxBytes: Math.round((payload.file.base64Data.length * 3) / 4),
+          base64Head: payload.file.base64Data.slice(0, 80),
+        }
+      : {
+          kind: 'text',
+          characters: payload.text?.length ?? 0,
+          textHead: (payload.text || '').slice(0, 300),
+        };
+    console.log('[Extraction] Sending:', requestSummary);
+
     try {
       const extractResponse = await fetch('/api/syllabus/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const extractData = await extractResponse.json();
-      if (!extractResponse.ok) {
-        throw new Error(extractData.error || 'Failed to parse syllabus.');
+      let extractData: SyllabusExtractionResult;
+      try {
+        extractData = await readJsonResponse(extractResponse, 'Extraction');
+      } catch (err: any) {
+        setRawExtraction({
+          request: requestSummary,
+          status: extractResponse.status,
+          ok: false,
+          body: err?.body ?? String(err?.message || err),
+          at: new Date().toISOString(),
+        });
+        throw err;
+      }
+      console.log('[Extraction] Server response:', extractData);
+      setRawExtraction({
+        request: requestSummary,
+        status: extractResponse.status,
+        ok: Boolean(extractData.meta?.model),
+        body: extractData,
+        at: new Date().toISOString(),
+      });
+
+      // Every response from the current server carries meta. If it is missing, the
+      // server process is running old code (which returned canned sample data).
+      if (!extractData.meta?.model) {
+        throw new Error(
+          'The server response has no extraction metadata (no model, no source info), so it did not come ' +
+            'from the current extraction code. The server process is running outdated code. Stop it and run ' +
+            '"npm run dev" again.'
+        );
       }
 
       applyExtraction(extractData);
       setActiveStage('review');
-      showToast(
-        `Extracted ${Array.isArray(extractData.gradedItems) ? extractData.gradedItems.length : 0} graded items from ${extractData.course?.courseCode || 'your syllabus'}.`
-      );
-
-      setIsExtracting(false);
-      setIsGeneratingPlan(true);
-
-      const planResponse = await fetch('/api/syllabus/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          course: extractData.course,
-          gradedItems: extractData.gradedItems,
-          questions: Array.isArray(extractData.questions) ? extractData.questions.slice(0, 3) : [],
-        }),
-      });
-      const planData = await planResponse.json();
-      if (!planResponse.ok) {
-        throw new Error(planData.error || 'Failed to generate study plan.');
-      }
-
-      applyStudyPlan(planData);
-      setActiveStage('plan');
-      showToast(`Updated study calendar for ${extractData.course?.courseCode || 'your syllabus'}.`);
+      const count = Array.isArray(extractData.gradedItems) ? extractData.gradedItems.length : 0;
+      showToast(`Extracted ${count} graded items. Check the extraction result below.`);
     } catch (err: any) {
+      console.error('[Extraction] Failed:', err);
       setErrorMessage(err?.message || 'Could not process this syllabus.');
       setActiveStage('input');
     } finally {
@@ -367,7 +439,7 @@ export default function App() {
       id: `custom-${Date.now()}`,
       title: 'New Graded Assignment',
       category: 'Homework',
-      dueDate: '2026-10-30',
+      dueDate: 'TBA',
       rawDateText: 'Custom item',
       weightPercent: 5,
       isDateAmbiguous: false,
@@ -446,15 +518,14 @@ export default function App() {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate study plan.');
-      }
+      const data = await readJsonResponse(response, 'Study plan');
+      console.log('[Study plan] Server response:', data);
 
       applyStudyPlan(data);
       setActiveStage('plan');
       showToast('Created study calendar and saved plan.ics with Python make_ics!');
     } catch (err: any) {
+      console.error('[Study plan] Failed:', err);
       setErrorMessage(err?.message || 'Error generating study plan.');
     } finally {
       setIsGeneratingPlan(false);
@@ -564,7 +635,7 @@ export default function App() {
   const handleAddEventOnSelectedDay = async () => {
     const newEv: CalendarEventItem = {
       id: `ev-${Date.now()}`,
-      title: `Study: ${course.courseCode} Review Session`,
+      title: `Study: ${course.courseCode || 'Course'} Review Session`,
       start: `${selectedDateStr}T18:30`,
       end: `${selectedDateStr}T20:30`,
       duration_hours: 2,
@@ -594,8 +665,8 @@ export default function App() {
           filename: 'plan.ics',
         }),
       });
-      const data = await response.json();
-      if (response.ok && data.icsContent) {
+      const data = await readJsonResponse(response, 'plan.ics update');
+      if (data.icsContent) {
         setStudyPlan((prev) => ({
           ...prev,
           events: eventsToSync,
@@ -605,8 +676,9 @@ export default function App() {
         }));
         showToast('Updated plan.ics via Python make_ics.');
       }
-    } catch {
-      // Keep local update
+    } catch (err: any) {
+      console.error('[plan.ics update] Failed:', err);
+      setErrorMessage(`Calendar changed locally, but plan.ics was not updated: ${err?.message || err}`);
     } finally {
       setIsReRunningIcs(false);
     }
@@ -627,7 +699,7 @@ export default function App() {
       URL.revokeObjectURL(url);
       showToast('Downloaded plan.ics calendar file.');
     } else {
-      window.location.href = '/api/syllabus/plan.ics';
+      setErrorMessage('No plan.ics yet. Extract a syllabus and create a study calendar first.');
     }
   };
 
@@ -743,7 +815,7 @@ export default function App() {
                   Add Your Course Syllabus
                 </h1>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  Paste syllabus text, upload a PDF or photo, or test with the pre-loaded messy CS 3410 syllabus.
+                  Paste syllabus text or upload a PDF or photo. Gemini extracts the graded items, and you can check the result before building a calendar.
                 </p>
               </div>
 
@@ -781,9 +853,6 @@ export default function App() {
                     </button>
                   </div>
 
-                  <span className="text-xs text-slate-500 font-mono tabular-nums">
-                    {MESSY_CS_SYLLABUS_TITLE}
-                  </span>
                 </div>
 
                 {inputMode === 'text' ? (
@@ -816,7 +885,7 @@ export default function App() {
                               : 'Building your study calendar...'}
                           </p>
                           <p className="text-xs text-slate-500 mt-1">
-                            The calendar and graded items will replace the sample CS 3410 plan.
+                            Sending to Gemini. This can take up to a minute for large PDFs.
                           </p>
                         </>
                       ) : uploadedFile ? (
@@ -849,38 +918,25 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={handleGenerateSamplePhoto}
-                        className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 rounded-md flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <ImageIcon className="w-3.5 h-3.5" />
-                        Generate Sample Photo Handout
-                      </button>
-
-                      {uploadedFile && (
+                    {uploadedFile && (
+                      <div className="flex items-center justify-end">
                         <span className="text-xs text-slate-600 dark:text-slate-400 font-mono">
                           Attached: {uploadedFile.fileName} ({uploadedFile.sizeKb} KB)
                         </span>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveStage('review')}
-                    className="px-4 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-                  >
-                    Skip to Pre-loaded Graded Items →
-                  </button>
-
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
                   <button
                     type="button"
                     onClick={handleExtractSyllabus}
-                    disabled={isExtracting || isGeneratingPlan || (inputMode === 'upload' && !uploadedFile)}
+                    disabled={
+                      isExtracting ||
+                      isGeneratingPlan ||
+                      (inputMode === 'upload' ? !uploadedFile : !syllabusText.trim())
+                    }
                     className="px-5 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
                   >
                     {isExtracting || isGeneratingPlan ? (
@@ -898,36 +954,45 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right 4 Cols: Simple Summary of the Messy Sample */}
+              {/* Right 4 Cols: How to verify extraction */}
               <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 font-display">
-                  Included Messy Sample Quirks
+                  How it works
                 </h2>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  The sample CS 3410 syllabus includes common real-world syllabus traps that SyllabusPilot resolves automatically:
-                </p>
-                <ul className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
-                  {MESSY_CS_SYLLABUS_HIGHLIGHTS.map((item, i) => (
-                    <li
-                      key={i}
-                      className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5"
-                    >
-                      <span className="font-mono font-semibold text-indigo-600 dark:text-indigo-400">
-                        0{i + 1}.
-                      </span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
+                <ol className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300 list-decimal list-inside leading-relaxed">
+                  <li>Your file or text goes to the server, which sends it to Gemini.</li>
+                  <li>
+                    The next page shows the file name, model, a verbatim quote from your document, and every
+                    extracted item. Open &quot;Raw extraction&quot; to see what was sent and Gemini&apos;s raw reply.
+                  </li>
+                  <li>If anything fails (missing API key, bad file, Gemini error), you see the error here. Details are logged in the server terminal.</li>
+                </ol>
               </div>
             </div>
+
+            {/* After a failed attempt, show exactly what was sent and what came back */}
+            {rawExtraction && !rawExtraction.ok && <RawExtractionPanel record={rawExtraction} />}
           </div>
         )}
 
         {/* =====================================================================
             STEP 2: CLEAN GRADED ITEMS TABLE, CHART & 3 QUESTIONS
            ===================================================================== */}
-        {activeStage === 'review' && (
+        {activeStage === 'review' && !lastExtraction && (
+          <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-10 text-center space-y-3">
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">No syllabus extracted yet</h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">Upload a PDF or photo, or paste syllabus text. The extracted graded items will appear here.</p>
+            <button
+              type="button"
+              onClick={() => setActiveStage('input')}
+              className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors cursor-pointer"
+            >
+              Go to Syllabus Input
+            </button>
+          </div>
+        )}
+
+        {activeStage === 'review' && lastExtraction && (
           <div className="space-y-8">
             {/* Simple Header */}
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -936,14 +1001,15 @@ export default function App() {
                   Review Graded Items &amp; Answer 3 Questions
                 </h1>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                  {course.courseCode}: {course.courseTitle} ({course.term}) · Edit any item below before building your calendar.
+                  {[course.courseCode, course.courseTitle].filter(Boolean).join(': ') || 'Untitled course'}
+                  {course.term ? ` (${course.term})` : ''} · Edit any item below before building your calendar.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleGenerateStudyPlan}
-                disabled={isGeneratingPlan}
+                disabled={isGeneratingPlan || gradedItems.length === 0}
                 className="px-5 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
               >
                 {isGeneratingPlan ? (
@@ -959,6 +1025,89 @@ export default function App() {
                 )}
               </button>
             </div>
+
+            {/* Extraction result: proof of what Gemini actually read */}
+            <div className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900 rounded-xl p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 font-display">
+                    Extraction Result
+                  </h2>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <dt className="text-slate-500">Source</dt>
+                  <dd className="font-mono text-slate-900 dark:text-slate-100 break-all mt-0.5">
+                    {lastExtraction.meta?.source === 'file'
+                      ? lastExtraction.meta?.fileName || 'unnamed file'
+                      : `Pasted text (${lastExtraction.meta?.textLength ?? '?'} chars)`}
+                  </dd>
+                  {lastExtraction.meta?.source === 'file' && (
+                    <dd className="text-slate-500 mt-0.5">
+                      {lastExtraction.meta?.mimeType} ·{' '}
+                      {lastExtraction.meta?.fileBytes
+                        ? `${(lastExtraction.meta.fileBytes / 1024).toFixed(1)} KB`
+                        : '?'}
+                    </dd>
+                  )}
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <dt className="text-slate-500">Model</dt>
+                  <dd className="font-mono text-slate-900 dark:text-slate-100 mt-0.5">
+                    {lastExtraction.meta?.model || 'unknown'}
+                  </dd>
+                  <dd className="text-slate-500 mt-0.5">
+                    {lastExtraction.meta?.durationMs != null
+                      ? `${(lastExtraction.meta.durationMs / 1000).toFixed(1)}s`
+                      : ''}
+                    {lastExtraction.meta?.extractedAt
+                      ? ` · ${new Date(lastExtraction.meta.extractedAt).toLocaleTimeString()}`
+                      : ''}
+                  </dd>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <dt className="text-slate-500">Course</dt>
+                  <dd className="text-slate-900 dark:text-slate-100 mt-0.5">
+                    {[lastExtraction.course?.courseCode, lastExtraction.course?.courseTitle]
+                      .filter(Boolean)
+                      .join(': ') || '(not found)'}
+                  </dd>
+                  <dd className="text-slate-500 mt-0.5">
+                    {[lastExtraction.course?.term, lastExtraction.course?.instructor].filter(Boolean).join(' · ')}
+                  </dd>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <dt className="text-slate-500">Found</dt>
+                  <dd className="text-slate-900 dark:text-slate-100 mt-0.5">
+                    {lastExtraction.gradedItems?.length ?? 0} graded items ·{' '}
+                    {lastExtraction.questions?.length ?? 0} questions
+                  </dd>
+                </div>
+              </dl>
+
+              {(lastExtraction.gradedItems?.length ?? 0) === 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  Gemini found no graded items in this document. Check that it is a syllabus with a grading
+                  breakdown, or add items manually below.
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs text-slate-500 mb-1">
+                  Verbatim quote from your document (as returned by Gemini):
+                </p>
+                <blockquote className="text-xs font-mono whitespace-pre-wrap p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border-l-4 border-indigo-400 text-slate-800 dark:text-slate-200">
+                  {lastExtraction.sourceQuote?.trim() || '(no quote returned)'}
+                </blockquote>
+              </div>
+
+            </div>
+
+            {rawExtraction && <RawExtractionPanel record={rawExtraction} />}
 
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-6 items-start">
             {/* Grade Weight Distribution */}
@@ -1298,7 +1447,21 @@ export default function App() {
         {/* =====================================================================
             STEP 3: EASY-TO-READ VISUAL CALENDAR & WEEKLY PLAN
            ===================================================================== */}
-        {activeStage === 'plan' && (
+        {activeStage === 'plan' && !hasStudyPlan && (
+          <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-10 text-center space-y-3">
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">No study calendar yet</h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">Extract a syllabus, review the graded items, then click &quot;Create Study Calendar &amp; plan.ics&quot;.</p>
+            <button
+              type="button"
+              onClick={() => setActiveStage(lastExtraction ? 'review' : 'input')}
+              className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors cursor-pointer"
+            >
+              {lastExtraction ? 'Go to Graded Items' : 'Go to Syllabus Input'}
+            </button>
+          </div>
+        )}
+
+        {activeStage === 'plan' && hasStudyPlan && (
           <div className="space-y-6">
             {/* Clean Top Bar for Calendar View */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">

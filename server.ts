@@ -3,6 +3,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { spawn, execFileSync } from 'child_process';
 import { FunctionDeclaration, GoogleGenAI, Type } from '@google/genai';
 
@@ -33,12 +34,15 @@ function getAiClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
+// Tried in order until one succeeds. Checked against the API on 2026-11-02:
+// gemini-2.5-flash / 2.5-flash-lite now return 404 for new users, and
+// gemini-3.8-flash was overloaded (503 / timeouts), so it sits near the end.
 const GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
   'gemini-flash-lite-latest',
-  'gemini-flash-latest',
-  'gemini-3-flash-preview',
 ];
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -57,14 +61,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+function isAuthError(message: string): boolean {
+  return /API key|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED|\b401\b|\b403\b/i.test(message);
+}
+
+type ModelAttempt = { model: string; ok: boolean; ms: number; error?: string };
+
+// Error thrown when every model fails; carries the per-model attempts for the UI.
+class GeminiFailedError extends Error {
+  attempts: ModelAttempt[];
+  constructor(message: string, attempts: ModelAttempt[]) {
+    super(message);
+    this.attempts = attempts;
+  }
+}
+
+// Tries each real Gemini model in turn. Never returns placeholder data:
+// if every model fails, a GeminiFailedError with every model's error is thrown.
 async function generateJsonFromGemini(params: {
   ai: GoogleGenAI;
   contents: any;
   schema: any;
   label: string;
-}): Promise<any> {
+}): Promise<{ data: any; model: string; rawText: string; attempts: ModelAttempt[] }> {
   let lastError: Error | null = null;
+  const attempts: ModelAttempt[] = [];
   for (const model of GEMINI_MODELS) {
+    const attemptStart = Date.now();
     try {
       console.log(`[${params.label}] Trying model ${model}...`);
       const response: any = await withTimeout(
@@ -76,135 +99,38 @@ async function generateJsonFromGemini(params: {
             responseSchema: params.schema,
           },
         }),
-        25000,
-        `${model} timed out after 25 seconds`,
+        60000,
+        `${model} timed out after 60 seconds`,
       );
-      const parsed = JSON.parse((response.text ?? '{}').trim());
+      const rawText = String(response.text ?? '').trim();
+      if (!rawText) {
+        throw new Error(`${model} returned an empty response`);
+      }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        throw new Error(`${model} returned text that is not valid JSON: ${rawText.slice(0, 200)}`);
+      }
       console.log(`[${params.label}] Success with ${model}`);
-      return parsed;
+      attempts.push({ model, ok: true, ms: Date.now() - attemptStart });
+      return { data: parsed, model, rawText, attempts };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err?.message || err));
-      console.warn(`[${params.label}] Model ${model} failed: ${lastError.message}`);
+      attempts.push({ model, ok: false, ms: Date.now() - attemptStart, error: lastError.message });
+      console.error(`[${params.label}] Model ${model} failed: ${lastError.message}`);
+      if (isAuthError(lastError.message)) {
+        console.error(
+          `[${params.label}] This looks like a GEMINI_API_KEY problem, so the other models were skipped.`,
+        );
+        break;
+      }
     }
   }
-  throw lastError || new Error(`All Gemini models failed for ${params.label}`);
-}
-
-function addDays(isoDate: string, days: number): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function startOfWeekMonday(isoDate: string): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const weekday = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - weekday);
-  return date.toISOString().slice(0, 10);
-}
-
-function parseWeeklyHours(questions: any[]): number {
-  const blob = JSON.stringify(questions || []);
-  const match = blob.match(/(\d+)\s*(?:hours?|hrs?)/i);
-  const hours = match ? Number(match[1]) : 8;
-  return Math.min(20, Math.max(4, hours));
-}
-
-function buildLocalStudyPlan(course: any, gradedItems: any[], questions: any[]) {
-  const datedItems = [...gradedItems]
-    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(String(item.dueDate)))
-    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
-  const weeklyHours = parseWeeklyHours(questions);
-  const startDate =
-    course?.semesterStartDate && /^\d{4}-\d{2}-\d{2}$/.test(course.semesterStartDate)
-      ? course.semesterStartDate
-      : datedItems[0]?.dueDate || new Date().toISOString().slice(0, 10);
-  const endDate =
-    course?.semesterEndDate && /^\d{4}-\d{2}-\d{2}$/.test(course.semesterEndDate)
-      ? course.semesterEndDate
-      : datedItems[datedItems.length - 1]?.dueDate || addDays(startDate, 84);
-
-  const events: any[] = [];
-  for (const item of datedItems) {
-    const due = String(item.dueDate);
-    const isExam = String(item.category) === 'Exam';
-    events.push({
-      id: `due-${item.id}`,
-      title: `${isExam ? 'EXAM' : 'DUE'}: ${item.title} (${item.weightPercent}%)`,
-      start: `${due}T${isExam ? '10:00' : '23:59'}`,
-      end: `${due}T${isExam ? '11:30' : '23:59'}`,
-      duration_hours: isExam ? 1.5 : 0.5,
-      description: item.details || `${item.category} due ${due}`,
-      location: isExam ? 'Exam location' : 'Course submission',
-      category: 'due_date',
-    });
-    const studyDate = addDays(due, -3);
-    events.push({
-      id: `study-${item.id}`,
-      title: `Study: ${item.title}`,
-      start: `${studyDate}T18:30`,
-      end: `${studyDate}T20:30`,
-      duration_hours: 2,
-      description: `Prep block for ${item.title} (${item.weightPercent}% of grade).`,
-      location: 'Study desk',
-      category: 'study_session',
-    });
-  }
-
-  const weeks: any[] = [];
-  let weekStart = startOfWeekMonday(startDate);
-  let weekNumber = 1;
-  while (weekStart <= endDate && weekNumber <= 16) {
-    const weekEnd = addDays(weekStart, 6);
-    const dueThisWeek = datedItems.filter(
-      (item) => item.dueDate >= weekStart && item.dueDate <= weekEnd,
-    );
-    const tasks = dueThisWeek.map((item: any, idx: number) => ({
-      id: `task-${weekNumber}-${idx}`,
-      title: `Finish ${item.title}`,
-      relatedItemTitle: item.title,
-      estimatedHours: Math.max(1, Math.round((Number(item.weightPercent) || 5) / 5)),
-      suggestedDay: item.dueDate,
-      priority: Number(item.weightPercent) >= 15 ? 'High' : 'Medium',
-      notes: item.details || `Due ${item.dueDate}`,
-    }));
-    if (tasks.length === 0) {
-      tasks.push({
-        id: `task-${weekNumber}-review`,
-        title: `Review ${course?.courseCode || 'course'} notes`,
-        relatedItemTitle: course?.courseTitle || 'Course',
-        estimatedHours: Math.max(1, Math.round(weeklyHours / 4)),
-        suggestedDay: addDays(weekStart, 1),
-        priority: 'Standard',
-        notes: 'Keep up with readings and lecture notes this week.',
-      });
-    }
-    weeks.push({
-      weekNumber,
-      dateRange: `${weekStart} to ${weekEnd}`,
-      theme: dueThisWeek.length
-        ? `Due: ${dueThisWeek.map((item: any) => item.title).join(', ')}`
-        : `${course?.courseCode || 'Course'} catch-up week`,
-      totalHours: tasks.reduce((sum: number, task: any) => sum + Number(task.estimatedHours || 0), 0),
-      milestonesDue: dueThisWeek.map((item: any) => item.title),
-      tasks,
-    });
-    weekStart = addDays(weekStart, 7);
-    weekNumber += 1;
-  }
-
-  return {
-    agentSummary: `Study plan for ${course?.courseCode || 'this course'}: ${datedItems.length} deadlines mapped onto weekly sessions.`,
-    studyStrategyNotes: [
-      `Budget about ${weeklyHours} hours per week.`,
-      'Work on high-weight items at least 3 days before they are due.',
-      'Use the calendar due-date markers as hard stop times.',
-    ],
-    weeks,
-    events,
-  };
+  throw new GeminiFailedError(
+    `All ${attempts.length} Gemini model(s) failed. Last error: ${lastError?.message || 'unknown'}`,
+    attempts,
+  );
 }
 
 // Declaration for the Python make_ics tool function
@@ -270,11 +196,11 @@ function escapeIcsTextFallback(val: string): string {
     .replace(/\r?\n/g, '\\n');
 }
 
-function formatIcsDateFallback(dtStr: string, defaultHour = 18, durationHours = 2): { dtstart: string; dtend: string } {
+function formatIcsDateFallback(dtStr: string, defaultHour = 18, durationHours = 2): { dtstart: string; dtend: string } | null {
   const clean = (dtStr || '').trim();
   let dateObj = new Date(clean);
-  if (isNaN(dateObj.getTime())) {
-    dateObj = new Date(2026, 8, 7, defaultHour, 0, 0);
+  if (!clean || isNaN(dateObj.getTime())) {
+    return null;
   } else if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
     const [y, m, d] = clean.split('-').map(Number);
     dateObj = new Date(y, m - 1, d, defaultHour, 0, 0);
@@ -310,7 +236,12 @@ function buildFallbackIcs(events: any[], filename = 'plan.ics'): string {
     const category = String(ev.category || 'study_session').toUpperCase();
     const duration = Number(ev.duration_hours) || 2.0;
     const defaultHr = category === 'DUE_DATE' ? 23 : 18;
-    const { dtstart, dtend } = formatIcsDateFallback(ev.start || '2026-09-07T18:00', defaultHr, duration);
+    const formatted = formatIcsDateFallback(ev.start, defaultHr, duration);
+    if (!formatted) {
+      console.warn(`[make_ics] Skipping event "${ev.title}" - invalid start date: ${JSON.stringify(ev.start)}`);
+      return;
+    }
+    const { dtstart, dtend } = formatted;
 
     lines.push(
       'BEGIN:VEVENT',
@@ -364,12 +295,13 @@ async function runPythonMakeIcs(
   }
 
   if (!selectedPython) {
-    // Fallback if python is unavailable
+    // Python is unavailable: write the same events with the built-in JS writer (no invented events).
+    console.warn('[make_ics] Python not found on PATH - writing plan.ics with the built-in JS writer instead.');
     const fallbackContent = buildFallbackIcs(events, safeFilename);
     return {
       icsContent: fallbackContent,
       executedWithPython: false,
-      pythonVersion: 'RFC 5545 Engine (Python 3 compatible)',
+      pythonVersion: 'Python not found - built-in JS .ics writer used',
     };
   }
 
@@ -389,7 +321,8 @@ async function runPythonMakeIcs(
       stderrData += chunk.toString();
     });
 
-    child.on('error', () => {
+    child.on('error', (err) => {
+      console.warn(`[make_ics] Could not start ${selectedPython}: ${err.message} - using built-in JS writer.`);
       const fallbackContent = buildFallbackIcs(events, safeFilename);
       resolve({
         icsContent: fallbackContent,
@@ -406,7 +339,7 @@ async function runPythonMakeIcs(
           pythonVersion,
         });
       } else {
-        console.warn('make_ics.py stderr:', stderrData);
+        console.warn(`[make_ics] make_ics.py exited with code ${code} - using built-in JS writer. stderr:`, stderrData);
         const fallbackContent = buildFallbackIcs(events, safeFilename);
         resolve({
           icsContent: fallbackContent,
@@ -449,17 +382,50 @@ app.post('/api/syllabus/extract', async (req, res) => {
       return;
     }
 
+    const fileBytes = file?.base64Data ? Math.round((file.base64Data.length * 3) / 4) : 0;
+    console.log(
+      file?.base64Data
+        ? `[Extract] Received file "${file.fileName || 'unnamed'}" (${file.mimeType}, ${(fileBytes / 1024).toFixed(1)} KB)`
+        : `[Extract] Received pasted text (${text!.trim().length} characters)`,
+    );
+
+    if (file?.base64Data && !file.mimeType) {
+      console.error(`[Extract] File "${file.fileName}" arrived without a mimeType - refusing to send a prompt with no document.`);
+      res.status(400).json({ error: `File "${file.fileName || 'unnamed'}" has no MIME type, so it cannot be sent to Gemini.` });
+      return;
+    }
+
     const ai = getAiClient();
     const parts: any[] = [];
 
-    if (file?.base64Data && file?.mimeType) {
+    // Summary of exactly what is sent to Gemini, returned to the UI for verification.
+    let sentToModel: Record<string, any>;
+    if (file?.base64Data) {
+      const decoded = Buffer.from(file.base64Data, 'base64');
+      sentToModel = {
+        kind: 'file',
+        fileName: file.fileName || null,
+        mimeType: file.mimeType,
+        decodedBytes: decoded.length,
+        sha256: crypto.createHash('sha256').update(decoded).digest('hex'),
+        base64Head: file.base64Data.slice(0, 80),
+      };
       parts.push({
         inlineData: {
           mimeType: file.mimeType,
           data: file.base64Data,
         },
       });
+    } else {
+      const trimmed = text!.trim();
+      sentToModel = {
+        kind: 'text',
+        characters: trimmed.length,
+        sha256: crypto.createHash('sha256').update(trimmed).digest('hex'),
+        textHead: trimmed.slice(0, 500),
+      };
     }
+    console.log('[Extract] Sending to Gemini:', JSON.stringify(sentToModel));
 
     const extractionPrompt = `You are SyllabusPilot, an expert academic syllabus parser and study planning agent.
 Analyze the provided course syllabus carefully. Syllabi can be messy, have instructor self-corrections (e.g. "due Oct 14, wait no—Friday Oct 16"), drop-lowest policies, or multi-part project weights.
@@ -469,6 +435,9 @@ Your job:
 2. Find EVERY graded item (what it is, its category, the resolved due date in YYYY-MM-DD or 'TBA' if genuinely unspecified, the rawDateText from the syllabus, how much it counts as weightPercent toward the 100% course grade, whether the date is ambiguous, and any policy details like slip days or drop-lowest rules).
    - Ensure the weightPercent values across all gradedItems accurately reflect the 100% grading breakdown. If a category has multiple items (e.g., 3 Problem Sets worth 15% total), list each individual item with its individual weight (e.g., 5% each).
 3. Formulate AT MOST 3 short, high-impact clarifying questions for the student so you can build their personalized week-by-week study plan (for example: how many hours per week they can study, which days/times they prefer for study blocks, and how early they want to start major exams/projects). Provide 3-4 concise quickOptions for each question and a sensible default answer.
+4. Set sourceQuote to a verbatim excerpt (up to ~300 characters) copied exactly from the top of the provided document, so the student can verify which document you read.
+
+Use ONLY information found in the provided document. Never invent graded items, dates, or course details. If a metadata field is not in the document, use an empty string. If the document is not a syllabus or contains no graded items, return an empty gradedItems array.
 
 ${text?.trim() ? `\n--- SYLLABUS TEXT ---\n${text.trim()}` : ''}`;
 
@@ -551,37 +520,72 @@ ${text?.trim() ? `\n--- SYLLABUS TEXT ---\n${text.trim()}` : ''}`;
             required: ['id', 'question', 'whyAsked', 'quickOptions', 'answer'],
           },
         },
+        sourceQuote: {
+          type: Type.STRING,
+          description: 'Verbatim excerpt copied from the top of the provided document.',
+        },
       },
-      required: ['course', 'gradedItems', 'questions'],
+      required: ['course', 'gradedItems', 'questions', 'sourceQuote'],
     };
 
+    sentToModel.promptCharacters = extractionPrompt.length;
+
     let parsed: any;
+    let modelUsed = '';
+    let rawModelText = '';
+    let attempts: ModelAttempt[] = [];
     try {
-      parsed = await generateJsonFromGemini({
+      const result = await generateJsonFromGemini({
         ai,
         contents: parts,
         schema: extractionSchema,
         label: 'Extract',
       });
-      console.log(`[Extract] Success in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+      parsed = result.data;
+      modelUsed = result.model;
+      rawModelText = result.rawText;
+      attempts = result.attempts;
     } catch (genError: any) {
       console.error(`[Extract] Gemini failed: ${genError?.message}`);
-      res.status(503).json({
-        error:
-          genError?.message ||
-          'Could not extract this syllabus. Check GEMINI_API_KEY and try again.',
+      res.status(502).json({
+        error: `Gemini extraction failed: ${genError?.message || 'unknown error'}`,
+        attempts: genError?.attempts || [],
+        sentToModel,
       });
       return;
     }
 
+    const durationMs = Date.now() - startTime;
+    if (!Array.isArray(parsed.gradedItems)) parsed.gradedItems = [];
     // Enforce hard cap of at most 3 questions
-    if (Array.isArray(parsed.questions)) {
-      parsed.questions = parsed.questions.slice(0, 3);
-    } else {
-      parsed.questions = [];
-    }
+    parsed.questions = Array.isArray(parsed.questions) ? parsed.questions.slice(0, 3) : [];
 
-    res.json(parsed);
+    console.log(
+      `[Extract] Success with ${modelUsed} in ${(durationMs / 1000).toFixed(1)}s: ` +
+        `course="${parsed.course?.courseCode || ''} ${parsed.course?.courseTitle || ''}", ` +
+        `${parsed.gradedItems.length} graded items, ${parsed.questions.length} questions`,
+    );
+    for (const item of parsed.gradedItems) {
+      console.log(`  - ${item.title} | ${item.category} | ${item.dueDate} | ${item.weightPercent}%`);
+    }
+    console.log(`[Extract] Source quote: ${JSON.stringify(String(parsed.sourceQuote || '').slice(0, 300))}`);
+
+    res.json({
+      ...parsed,
+      meta: {
+        source: file?.base64Data ? 'file' : 'text',
+        fileName: file?.fileName || null,
+        mimeType: file?.mimeType || null,
+        fileBytes: fileBytes || null,
+        textLength: file?.base64Data ? null : text!.trim().length,
+        model: modelUsed,
+        durationMs,
+        extractedAt: new Date().toISOString(),
+        attempts,
+        sentToModel,
+        rawModelText,
+      },
+    });
   } catch (error: any) {
     console.error('Error in /api/syllabus/extract:', error);
     res.status(500).json({
@@ -722,16 +726,24 @@ INSTRUCTIONS:
 
     let parsedPlan: any;
     try {
-      parsedPlan = await generateJsonFromGemini({
+      const result = await generateJsonFromGemini({
         ai,
         contents: prompt,
         schema: planSchema,
         label: 'Plan',
       });
-      console.log(`[Plan] Success in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+      parsedPlan = result.data;
+      console.log(
+        `[Plan] Success with ${result.model} in ${((Date.now() - startTime) / 1000).toFixed(1)}s ` +
+          `(${parsedPlan.weeks?.length ?? 0} weeks, ${parsedPlan.events?.length ?? 0} events)`,
+      );
     } catch (genError: any) {
-      console.warn(`[Plan] Gemini failed (${genError?.message}). Building a local calendar from the graded items.`);
-      parsedPlan = buildLocalStudyPlan(course, gradedItems, questions);
+      console.error(`[Plan] Gemini failed: ${genError?.message}`);
+      if (genError?.stack) console.error(genError.stack);
+      res.status(502).json({
+        error: `Gemini study-plan generation failed: ${genError?.message || 'unknown error'}. Check GEMINI_API_KEY in .env and the server terminal for details.`,
+      });
+      return;
     }
     const events = Array.isArray(parsedPlan.events) ? parsedPlan.events : [];
 
@@ -816,6 +828,18 @@ app.get('/api/syllabus/make_ics.py', (_req, res) => {
   } else {
     res.status(404).send('make_ics.py not found.');
   }
+});
+
+// Return JSON (not an HTML page) for body-parser errors such as an oversized upload.
+app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!err) return next();
+  const status = err.status || err.statusCode || 500;
+  const message =
+    err.type === 'entity.too.large'
+      ? 'Uploaded file is too large (limit is about 18 MB after encoding). Try a smaller PDF or image.'
+      : err.message || 'Request failed';
+  console.error(`[${req.method} ${req.originalUrl}] ${status}: ${message}`);
+  res.status(status).json({ error: message });
 });
 
 async function startServer() {

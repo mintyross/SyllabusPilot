@@ -36,10 +36,26 @@ export interface CourseMetadata {
   gradingPolicySummary: string;
 }
 
+export interface ExtractionMeta {
+  source: 'file' | 'text';
+  fileName: string | null;
+  mimeType: string | null;
+  fileBytes: number | null;
+  textLength: number | null;
+  model: string;
+  durationMs: number;
+  extractedAt: string;
+  attempts?: Array<{ model: string; ok: boolean; ms: number; error?: string }>;
+  sentToModel?: Record<string, unknown>;
+  rawModelText?: string;
+}
+
 export interface SyllabusExtractionResult {
   course: CourseMetadata;
   gradedItems: GradedItem[];
   questions: AgentQuestion[];
+  sourceQuote?: string;
+  meta?: ExtractionMeta;
 }
 
 export interface StudyTask {
