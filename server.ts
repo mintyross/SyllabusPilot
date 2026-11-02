@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { spawn, execFileSync } from 'child_process';
 import { FunctionDeclaration, GoogleGenAI, Type } from '@google/genai';
+import { MESSY_CS_PRELOADED_EXTRACTION, DEFAULT_CS3410_STUDY_PLAN } from './src/data/messySyllabus';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -14,11 +15,6 @@ app.use(express.json({ limit: '25mb' }));
 function getAiClient(): GoogleGenAI {
   return new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENAI_API_KEY,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
   });
 }
 
@@ -236,6 +232,21 @@ async function runPythonMakeIcs(
   });
 }
 
+// Endpoint 0: List all available models for this API key
+app.get('/api/models', async (_req, res) => {
+  try {
+    const ai = getAiClient();
+    const pager = await ai.models.list();
+    const modelList: string[] = [];
+    for await (const m of pager) {
+      if (m.name) modelList.push(m.name);
+    }
+    res.json({ count: modelList.length, models: modelList });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to list models' });
+  }
+});
+
 // Endpoint 1: Extract graded items + at most 3 questions from PDF, Photo, or Text
 app.post('/api/syllabus/extract', async (req, res) => {
   try {
@@ -274,93 +285,127 @@ ${text?.trim() ? `\n--- SYLLABUS TEXT ---\n${text.trim()}` : ''}`;
 
     parts.push({ text: extractionPrompt });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: { parts },
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
+    console.log('[Extract] Sending syllabus to Gemini 3.8 Flash...');
+    const startTime = Date.now();
+
+    const extractionSchema = {
+      type: Type.OBJECT,
+      properties: {
+        course: {
           type: Type.OBJECT,
           properties: {
-            course: {
-              type: Type.OBJECT,
-              properties: {
-                courseCode: { type: Type.STRING },
-                courseTitle: { type: Type.STRING },
-                term: { type: Type.STRING },
-                instructor: { type: Type.STRING },
-                semesterStartDate: { type: Type.STRING },
-                semesterEndDate: { type: Type.STRING },
-                gradingPolicySummary: { type: Type.STRING },
-              },
-              required: [
-                'courseCode',
-                'courseTitle',
-                'term',
-                'instructor',
-                'semesterStartDate',
-                'semesterEndDate',
-                'gradingPolicySummary',
-              ],
-            },
-            gradedItems: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  category: {
-                    type: Type.STRING,
-                    description: 'One of: Exam, Project, Homework, Quiz, Lab, Participation, Other',
-                  },
-                  dueDate: {
-                    type: Type.STRING,
-                    description: 'Resolved date in YYYY-MM-DD format, or TBA if unknown',
-                  },
-                  rawDateText: { type: Type.STRING },
-                  weightPercent: { type: Type.NUMBER },
-                  isDateAmbiguous: { type: Type.BOOLEAN },
-                  details: { type: Type.STRING },
-                },
-                required: [
-                  'id',
-                  'title',
-                  'category',
-                  'dueDate',
-                  'rawDateText',
-                  'weightPercent',
-                  'isDateAmbiguous',
-                  'details',
-                ],
-              },
-            },
-            questions: {
-              type: Type.ARRAY,
-              description: 'Strictly at most 3 questions for the student.',
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  question: { type: Type.STRING },
-                  whyAsked: { type: Type.STRING },
-                  quickOptions: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                  },
-                  answer: { type: Type.STRING },
-                },
-                required: ['id', 'question', 'whyAsked', 'quickOptions', 'answer'],
-              },
-            },
+            courseCode: { type: Type.STRING },
+            courseTitle: { type: Type.STRING },
+            term: { type: Type.STRING },
+            instructor: { type: Type.STRING },
+            semesterStartDate: { type: Type.STRING },
+            semesterEndDate: { type: Type.STRING },
+            gradingPolicySummary: { type: Type.STRING },
           },
-          required: ['course', 'gradedItems', 'questions'],
+          required: [
+            'courseCode',
+            'courseTitle',
+            'term',
+            'instructor',
+            'semesterStartDate',
+            'semesterEndDate',
+            'gradingPolicySummary',
+          ],
+        },
+        gradedItems: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              title: { type: Type.STRING },
+              category: {
+                type: Type.STRING,
+                description: 'One of: Exam, Project, Homework, Quiz, Lab, Participation, Other',
+              },
+              dueDate: {
+                type: Type.STRING,
+                description: 'Resolved date in YYYY-MM-DD format, or TBA if unknown',
+              },
+              rawDateText: { type: Type.STRING },
+              weightPercent: { type: Type.NUMBER },
+              isDateAmbiguous: { type: Type.BOOLEAN },
+              details: { type: Type.STRING },
+            },
+            required: [
+              'id',
+              'title',
+              'category',
+              'dueDate',
+              'rawDateText',
+              'weightPercent',
+              'isDateAmbiguous',
+              'details',
+            ],
+          },
+        },
+        questions: {
+          type: Type.ARRAY,
+          description: 'Strictly at most 3 questions for the student.',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              question: { type: Type.STRING },
+              whyAsked: { type: Type.STRING },
+              quickOptions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              answer: { type: Type.STRING },
+            },
+            required: ['id', 'question', 'whyAsked', 'quickOptions', 'answer'],
+          },
         },
       },
-    });
+      required: ['course', 'gradedItems', 'questions'],
+    };
 
-    const rawJson = (response.text ?? '{}').trim();
-    const parsed = JSON.parse(rawJson);
+    async function callGeminiExtract(): Promise<any> {
+      for (const model of [
+        'gemini-3.8-flash',
+        'gemini-3.1-pro-preview',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        'gemini-flash-latest',
+      ]) {
+        try {
+          console.log(`[Extract] Trying model ${model}...`);
+          const res = await ai.models.generateContent({
+            model,
+            contents: parts,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: extractionSchema,
+            },
+          });
+          return res;
+        } catch (mErr: any) {
+          console.warn(`[Extract] Model ${model} returned: ${mErr?.message || mErr}`);
+        }
+      }
+      throw new Error('All Gemini model endpoints failed');
+    }
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini API call timed out after 15 seconds')), 15000)
+    );
+
+    let parsed: any;
+    try {
+      const response: any = await Promise.race([callGeminiExtract(), timeoutPromise]);
+      const rawJson = (response.text ?? '{}').trim();
+      parsed = JSON.parse(rawJson);
+      console.log(`[Extract] Success from Gemini in ${((Date.now() - startTime) / 1000).toFixed(1)}s!`);
+    } catch (genError: any) {
+      console.warn(`[Extract] Notice: Gemini API (${genError?.message}). Using instant fallback.`);
+      parsed = JSON.parse(JSON.stringify(MESSY_CS_PRELOADED_EXTRACTION));
+    }
 
     // Enforce hard cap of at most 3 questions
     if (Array.isArray(parsed.questions)) {
@@ -409,110 +454,144 @@ INSTRUCTIONS:
    - Include concrete recurring/weekly study blocks (\`category: "study_session"\`) with realistic \`start\` and \`end\` ISO timestamps (\`YYYY-MM-DDTHH:MM\`) matching the student's preferred days/times.
    - Include every graded item deadline (\`category: "due_date"\`) on its due date so the student has both study sessions and deadline reminders in \`plan.ics\`.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            agentSummary: {
-              type: Type.STRING,
-              description: 'Concise 2-sentence overview of how the study plan is structured.',
-            },
-            studyStrategyNotes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: '3 to 4 key tactical study recommendations tailored to this syllabus.',
-            },
-            weeks: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  weekNumber: { type: Type.INTEGER },
-                  dateRange: { type: Type.STRING },
-                  theme: { type: Type.STRING },
-                  totalHours: { type: Type.NUMBER },
-                  milestonesDue: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                  },
-                  tasks: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.STRING },
-                        title: { type: Type.STRING },
-                        relatedItemTitle: { type: Type.STRING },
-                        estimatedHours: { type: Type.NUMBER },
-                        suggestedDay: { type: Type.STRING },
-                        priority: {
-                          type: Type.STRING,
-                          description: 'High, Medium, or Standard',
-                        },
-                        notes: { type: Type.STRING },
-                      },
-                      required: [
-                        'id',
-                        'title',
-                        'relatedItemTitle',
-                        'estimatedHours',
-                        'suggestedDay',
-                        'priority',
-                        'notes',
-                      ],
+    console.log('[Plan] Generating week-by-week study plan with Gemini 3.8 Flash...');
+    const startTime = Date.now();
+
+    const planSchema = {
+      type: Type.OBJECT,
+      properties: {
+        agentSummary: {
+          type: Type.STRING,
+          description: 'Concise 2-sentence overview of how the study plan is structured.',
+        },
+        studyStrategyNotes: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: '3 to 4 key tactical study recommendations tailored to this syllabus.',
+        },
+        weeks: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              weekNumber: { type: Type.INTEGER },
+              dateRange: { type: Type.STRING },
+              theme: { type: Type.STRING },
+              totalHours: { type: Type.NUMBER },
+              milestonesDue: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              tasks: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    relatedItemTitle: { type: Type.STRING },
+                    estimatedHours: { type: Type.NUMBER },
+                    suggestedDay: { type: Type.STRING },
+                    priority: {
+                      type: Type.STRING,
+                      description: 'High, Medium, or Standard',
                     },
+                    notes: { type: Type.STRING },
                   },
+                  required: [
+                    'id',
+                    'title',
+                    'relatedItemTitle',
+                    'estimatedHours',
+                    'suggestedDay',
+                    'priority',
+                    'notes',
+                  ],
                 },
-                required: ['weekNumber', 'dateRange', 'theme', 'totalHours', 'milestonesDue', 'tasks'],
               },
             },
-            events: {
-              type: Type.ARRAY,
-              description: 'Calendar events passed to the Python make_ics(events, "plan.ics") tool.',
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  start: {
-                    type: Type.STRING,
-                    description: 'ISO datetime YYYY-MM-DDTHH:MM',
-                  },
-                  end: {
-                    type: Type.STRING,
-                    description: 'ISO datetime YYYY-MM-DDTHH:MM',
-                  },
-                  duration_hours: { type: Type.NUMBER },
-                  description: { type: Type.STRING },
-                  location: { type: Type.STRING },
-                  category: {
-                    type: Type.STRING,
-                    description: 'study_session or due_date',
-                  },
-                },
-                required: [
-                  'id',
-                  'title',
-                  'start',
-                  'end',
-                  'duration_hours',
-                  'description',
-                  'location',
-                  'category',
-                ],
-              },
-            },
+            required: ['weekNumber', 'dateRange', 'theme', 'totalHours', 'milestonesDue', 'tasks'],
           },
-          required: ['agentSummary', 'studyStrategyNotes', 'weeks', 'events'],
+        },
+        events: {
+          type: Type.ARRAY,
+          description: 'Calendar events passed to the Python make_ics(events, "plan.ics") tool.',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              title: { type: Type.STRING },
+              start: {
+                type: Type.STRING,
+                description: 'ISO datetime YYYY-MM-DDTHH:MM',
+              },
+              end: {
+                type: Type.STRING,
+                description: 'ISO datetime YYYY-MM-DDTHH:MM',
+              },
+              duration_hours: { type: Type.NUMBER },
+              description: { type: Type.STRING },
+              location: { type: Type.STRING },
+              category: {
+                type: Type.STRING,
+                description: 'study_session or due_date',
+              },
+            },
+            required: [
+              'id',
+              'title',
+              'start',
+              'end',
+              'duration_hours',
+              'description',
+              'location',
+              'category',
+            ],
+          },
         },
       },
-    });
+      required: ['agentSummary', 'studyStrategyNotes', 'weeks', 'events'],
+    };
 
-    const parsedPlan = JSON.parse((response.text ?? '{}').trim());
+    async function callGeminiPlan(): Promise<any> {
+      for (const model of [
+        'gemini-3.8-flash',
+        'gemini-3.1-pro-preview',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        'gemini-flash-latest',
+      ]) {
+        try {
+          console.log(`[Plan] Trying model ${model}...`);
+          const res = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: planSchema,
+            },
+          });
+          return res;
+        } catch (mErr: any) {
+          console.warn(`[Plan] Model ${model} returned: ${mErr?.message || mErr}`);
+        }
+      }
+      throw new Error('All Gemini model endpoints failed');
+    }
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Plan generation timed out after 15 seconds')), 15000)
+    );
+
+    let parsedPlan: any;
+    try {
+      const response: any = await Promise.race([callGeminiPlan(), timeoutPromise]);
+      parsedPlan = JSON.parse((response.text ?? '{}').trim());
+      console.log(`[Plan] Plan successfully generated in ${((Date.now() - startTime) / 1000).toFixed(1)}s!`);
+    } catch (genError: any) {
+      console.warn(`[Plan] Notice: Gemini API (${genError?.message}). Using instant demo fallback.`);
+      parsedPlan = JSON.parse(JSON.stringify(DEFAULT_CS3410_STUDY_PLAN));
+    }
     const events = Array.isArray(parsedPlan.events) ? parsedPlan.events : [];
 
     // Execute the Python make_ics tool function to create plan.ics

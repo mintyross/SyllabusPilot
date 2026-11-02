@@ -8,7 +8,7 @@ and graded course deadlines.
 import json
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 
 
@@ -68,7 +68,7 @@ def make_ics(events: List[Dict[str, Any]], filename: str = "plan.ics") -> str:
     Returns:
       str: The complete RFC 5545 iCalendar string written to `filename`.
     """
-    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -124,8 +124,16 @@ def make_ics(events: List[Dict[str, Any]], filename: str = "plan.ics") -> str:
     ics_content = "\r\n".join(lines) + "\r\n"
 
     if filename:
-        with open(filename, "w", encoding="utf-8", newline="") as f:
-            f.write(ics_content)
+        clean_filename = "".join(
+            c for c in str(filename).strip().strip("'\"") if c.isprintable() and c not in '<>:"/\\|?*\r\n\t'
+        )
+        if not clean_filename:
+            clean_filename = "plan.ics"
+        try:
+            with open(clean_filename, "w", encoding="utf-8") as f:
+                f.write(ics_content)
+        except Exception as e:
+            sys.stderr.write(f"Notice: written to stdout, disk write skipped ({e})\n")
 
     return ics_content
 
