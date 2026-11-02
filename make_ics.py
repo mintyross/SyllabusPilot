@@ -130,7 +130,8 @@ def make_ics(events: List[Dict[str, Any]], filename: str = "plan.ics") -> str:
         if not clean_filename:
             clean_filename = "plan.ics"
         try:
-            with open(clean_filename, "w", encoding="utf-8") as f:
+            # newline="" stops Windows from turning \r\n into \r\r\n
+            with open(clean_filename, "w", encoding="utf-8", newline="") as f:
                 f.write(ics_content)
         except Exception as e:
             sys.stderr.write(f"Notice: written to stdout, disk write skipped ({e})\n")

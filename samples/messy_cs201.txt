@@ -1,0 +1,23 @@
+CS 201 -- Data Structures & Algorithms     Fall '26
+prof. M. Okafor  |  office hrs: tues 3-5ish (or email, I'll reply eventually)
+Classes start Tue Sept 1. Reading week = week 8, no lectures.
+
+~~~ PLEASE READ, this replaces the old syllabus from the portal ~~~
+
+how ur graded (subject to change!!):
+  * problem sets .......... 25%   (5 of them, every 2 wks, due Fridays 23:59)
+        PS1 sept 18th / PS2 Oct 2 / PS3 Oct. 16 / PS4 Oct 30 / PS5 TBA (prob mid nov)
+        lowest one is dropped!
+  * Quizzes ................ 10%  -- in class, unannounced, best 3 of 4
+  * Midterm ................ 20 %   Week 7, in lecture (Tue)
+  * group project
+        - proposal 5%  due 10/09/2026
+        - final demo + report 15% -> last week of classes, Fri Dec 11
+  * FINAL EXAM  25%   -- exam period, date set by registrar (TBD), 3 hrs, closed book
+
+NOTE: participation is not graded but I notice who shows up :)
+Late policy: -10%/day, max 3 days. No late work on the project demo.
+Collab OK on PS, NOT on quizzes or exams. Cite your sources.
+
+Topics (rough): wk1 big-O, wk2-3 arrays/linked lists, wk4 stacks+queues,
+wk5-6 trees, wk7 MIDTERM, wk9-10 hashing, wk11-12 graphs, wk13 DP, wk14 review
