@@ -30,7 +30,7 @@ F3. Questions instructions, prompts/questions.md (S)
 Asks at most 3 questions: hours per week, start date, preferred study days.
 Done when it never asks a 4th question.
 
-F4. Plan display instructions, prompts/plan.md (S)
+(Sofija) F4. Plan display instructions, prompts/plan.md (S)
 Shows the week-by-week plan clearly and asks “Save as calendar?” before calling make_ics.
 
 F5. Agent wiring, agent.py (M, needs F1)
