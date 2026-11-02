@@ -2,15 +2,127 @@
   {
     "sample": "bio101.txt",
     "expected_items": [
-      {"name": "Weekly Homework", "type": "assignment", "due_date": None, "weight": 15},
-      {"name": "Pop Quizzes", "type": "quiz", "due_date": None, "weight": 10},
-      {"name": "Lab Report 1", "type": "lab", "due_date": "2026-09-24", "weight": 5},
-      {"name": "Lab Report 2", "type": "lab", "due_date": "2026-10-15", "weight": 5},
-      {"name": "Lab Report 3", "type": "lab", "due_date": "2026-11-05", "weight": 5},
-      {"name": "Lab Report 4", "type": "lab", "due_date": "2026-11-19", "weight": 5},
-      {"name": "Midterm Exam", "type": "exam", "due_date": "2026-10-21", "weight": 20},
-      {"name": "Term Paper", "type": "paper", "due_date": "2026-12-01", "weight": 15},
-      {"name": "Comprehensive Final Exam", "type": "exam", "due_date": "2026-12-14", "weight": 20}
+      {
+        "name": "Weekly Homework",
+        "type": "assignment",
+        "due_date": null,
+        "weight": 15
+      },
+      {
+        "name": "Pop Quizzes",
+        "type": "quiz",
+        "due_date": null,
+        "weight": 10
+      },
+      {
+        "name": "Lab Report 1",
+        "type": "lab",
+        "due_date": "2026-09-24",
+        "weight": 5
+      },
+      {
+        "name": "Lab Report 2",
+        "type": "lab",
+        "due_date": "2026-10-15",
+        "weight": 5
+      },
+      {
+        "name": "Lab Report 3",
+        "type": "lab",
+        "due_date": "2026-11-05",
+        "weight": 5
+      },
+      {
+        "name": "Lab Report 4",
+        "type": "lab",
+        "due_date": "2026-11-19",
+        "weight": 5
+      },
+      {
+        "name": "Midterm Exam",
+        "type": "exam",
+        "due_date": "2026-10-21",
+        "weight": 20
+      },
+      {
+        "name": "Term Paper",
+        "type": "paper",
+        "due_date": "2026-12-01",
+        "weight": 15
+      },
+      {
+        "name": "Comprehensive Final Exam",
+        "type": "exam",
+        "due_date": "2026-12-14",
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "sample": "messy_cs201.txt",
+    "semester_start": "2026-09-01",
+    "notes": "Tricky case: one date is TBA, one is 'Week 7', weights written as '20 %', dropped lowest problem set, US-style date 10/09/2026 (= Oct 9).",
+    "expected_items": [
+      {
+        "name": "Problem Set 1",
+        "type": "assignment",
+        "due_date": "2026-09-18",
+        "weight": 5
+      },
+      {
+        "name": "Problem Set 2",
+        "type": "assignment",
+        "due_date": "2026-10-02",
+        "weight": 5
+      },
+      {
+        "name": "Problem Set 3",
+        "type": "assignment",
+        "due_date": "2026-10-16",
+        "weight": 5
+      },
+      {
+        "name": "Problem Set 4",
+        "type": "assignment",
+        "due_date": "2026-10-30",
+        "weight": 5
+      },
+      {
+        "name": "Problem Set 5",
+        "type": "assignment",
+        "due_date": null,
+        "weight": 5
+      },
+      {
+        "name": "Quizzes (best 3 of 4)",
+        "type": "quiz",
+        "due_date": null,
+        "weight": 10
+      },
+      {
+        "name": "Midterm exam",
+        "type": "exam",
+        "due_date": "2026-10-13",
+        "weight": 20
+      },
+      {
+        "name": "Project proposal",
+        "type": "project",
+        "due_date": "2026-10-09",
+        "weight": 5
+      },
+      {
+        "name": "Project demo + report",
+        "type": "project",
+        "due_date": "2026-12-11",
+        "weight": 15
+      },
+      {
+        "name": "Final exam",
+        "type": "exam",
+        "due_date": null,
+        "weight": 25
+      }
     ]
   }
 ]

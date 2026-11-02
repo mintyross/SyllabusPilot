@@ -37,8 +37,15 @@ def normalize_date(text: str, semester_start: str = "2026-09-01") -> str | None:
 
     # Remove ordinals: 1st, 2nd, 3rd, 4th, etc.
     cleaned_date = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", cleaned, flags=re.IGNORECASE)
+    # "Sept" is common in syllabi, but Python only understands "Sep"
+    cleaned_date = re.sub(r"\bSept\b\.?", "Sep", cleaned_date, flags=re.IGNORECASE)
+    # Drop weekday names and filler words: "Due Wednesday, October 21" -> "October 21"
+    cleaned_date = re.sub(
+        r"\b(due|by|on|mon(day)?|tue(s|sday)?|wed(nesday)?|thu(rs|rsday)?|fri(day)?|sat(urday)?|sun(day)?)\b\.?,?",
+        "", cleaned_date, flags=re.IGNORECASE)
     # Remove time portions if present (e.g. 'at 5:00 PM', '10:00 AM')
-    cleaned_date = re.sub(r"\b(at\s+)?\d{1,2}:\d{2}\s*(AM|PM)?\b", "", cleaned_date, flags=re.IGNORECASE).strip()
+    cleaned_date = re.sub(r"\b(at\s+)?\d{1,2}:\d{2}\s*(AM|PM)?", "", cleaned_date, flags=re.IGNORECASE)
+    cleaned_date = re.sub(r"\s+", " ", cleaned_date).strip(" ,.")
 
     # Formats to try
     formats = [
@@ -56,11 +63,20 @@ def normalize_date(text: str, semester_start: str = "2026-09-01") -> str | None:
         "%m/%d/%y",   # 10/21/26
     ]
 
+    # No year written: use the semester's year
+    try:
+        default_year = datetime.strptime(semester_start, "%Y-%m-%d").year
+    except ValueError:
+        default_year = datetime.now().year
+
     for fmt in formats:
         try:
-            parsed = datetime.strptime(cleaned_date, fmt)
-            year = 2026 if parsed.year == 1900 else parsed.year
-            return parsed.replace(year=year).strftime("%Y-%m-%d")
+            if "%Y" in fmt or "%y" in fmt:
+                parsed = datetime.strptime(cleaned_date, fmt)
+            else:
+                # Add the year ourselves (newer Python versions reject dates without one)
+                parsed = datetime.strptime(f"{cleaned_date} {default_year}", f"{fmt} %Y")
+            return parsed.strftime("%Y-%m-%d")
         except ValueError:
             continue
 
