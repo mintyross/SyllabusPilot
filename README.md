@@ -100,12 +100,22 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser!
 
 You can also run SyllabusPilot directly through the official Google Agent Development Kit CLI:
 
-```powershell
-# In PowerShell:
-cd syllabus_pilot
-adk web
-```
-Then visit **[http://localhost:8000](http://localhost:8000)** and select `syllabus_pilot` from the menu.
+1. Create `syllabus_pilot/.env` (next to `agent.py`) with:
+   ```env
+   GOOGLE_GENAI_USE_VERTEXAI=FALSE
+   GOOGLE_API_KEY=your_gemini_api_key_here
+   ```
+2. From the **repo root** (the folder that *contains* `syllabus_pilot/`, not from inside it):
+   ```powershell
+   py -m venv venv
+   venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+   pip install -r requirements.txt
+   adk web
+   ```
+   On Windows you can also just double-click `run_agent.bat` after the first setup.
+3. Visit **[http://localhost:8000](http://localhost:8000)** and select `syllabus_pilot` from the menu.
+
+Run the tests with `python -m pytest` from the repo root.
 
 ---
 

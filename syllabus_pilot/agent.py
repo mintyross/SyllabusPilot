@@ -28,11 +28,6 @@ Your goal is to transform any messy syllabus (PDF, text, or image) into an actio
 {_read_prompt("questions.md")}
 
 {_read_prompt("plan.md")}
-
-When building the final schedule:
-1. You can use the `build_plan` tool or your own reasoning to spread sessions.
-2. Call `make_ics` with the planned sessions to generate the `plan.ics` calendar file.
-3. Confirm to the student that their calendar file is ready to import into Google Calendar!
 """
 
 root_agent = Agent(
