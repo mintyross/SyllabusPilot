@@ -1,0 +1,78 @@
+Here is the whole project split into small features. Each one lives in its own file and can be built and tested alone with the fake data below, then added to GitHub through its own pull request.
+
+Shared data shapes (everyone uses these)
+item    = {"name": "Midterm exam", "type": "exam", "due_date": "2026-11-16", "weight": 25}  # due_date can be None
+session = {"title": "Study: Midterm exam", "date": "2026-11-10", "hours": 2, "description": "Ch. 1-4"}
+
+NOW THE TASKS
+Order
+F1 first. It takes about 15 minutes, and the steps we’re doing now produce it.
+F2–F4, F6–F12 and F15 can all start at the same time using the fake data.
+F5 connects everything.
+Then F13, F14 and F16.
+
+Features
+
+🧱 Foundation (do this first; everything else can start at the same time on people’s own computers)
+
+F1. Repo and skeleton agent (size S)
+Files: .gitignore (must list .env), requirements.txt, syllabus_pilot/__init__.py, plus a basic agent.py that only says hello.
+Done when anyone can clone the repo and run adk web.
+
+🧠 Agent brain
+
+The agent’s instructions are split into separate text files so nobody edits the same file.
+F2. Extraction instructions, syllabus_pilot/prompts/extract.md (S)
+Finds every graded item and shows a table: Item | Type | Due date | Weight %.
+Done when the table is correct for all the sample syllabi.
+
+F3. Questions instructions, prompts/questions.md (S)
+Asks at most 3 questions: hours per week, start date, preferred study days.
+Done when it never asks a 4th question.
+
+F4. Plan display instructions, prompts/plan.md (S)
+Shows the week-by-week plan clearly and asks “Save as calendar?” before calling make_ics.
+
+F5. Agent wiring, agent.py (M, needs F1)
+Loads the 3 prompt files and registers the tools.
+Can be built early with stand-in tools that return fake data.
+
+🔧 Tools (Python functions the agent can call)
+
+F6. check_items(items), tools/checks.py (S)
+Flags missing dates, weights that don’t add up to 100%, and duplicates.
+
+F7. normalize_date(text, semester_start), tools/dates.py (M)
+Turns things like “Week 7”, “Oct 3rd” or “TBA” into a YYYY-MM-DD date, or None when there is no real date.
+
+F8. build_plan(items, hours_per_week, start_date), tools/planner.py (L)
+Spreads study hours across the weeks, with more hours before items that count more.
+
+F9. make_ics(sessions), tools/calendar.py (M)
+Writes a valid plan.ics file and returns its path.
+
+📄 Input
+
+F10. Sample syllabi and correct answers, samples/ (M)
+The messy text syllabus, a PDF version, a phone photo, one tricky case, plus expected.json with the right answer for each.
+
+F11. PDF and photo upload check, tools/pdf.py (S)
+Checks that uploads work in adk web.
+Adds a backup read_pdf(path) tool (using the pypdf library) in case a PDF isn’t read properly.
+
+✅ Testing
+
+F12. Tool tests, tests/ (M)
+Automatic checks for F6–F9, using the fake data above.
+
+F13. Calendar import check (S, needs F9)
+Imports plan.ics into Google Calendar and Outlook, and writes down any problems.
+
+F14. Full run test (M, needs F5 and F10)
+Runs every sample through the whole agent and reports bugs as GitHub Issues.
+
+⭐ Stretch goals (only after the full flow works)
+
+F15. Deadline events and reminders in plan.ics: the actual due dates, with an alert one day before each.
+
+F16. Lovable web front end that talks to the agent through adk api_server (a command that runs your agent as a web service other apps can call).
