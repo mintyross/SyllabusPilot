@@ -218,10 +218,10 @@ SyllabusPilot was built at **Coding with AI: Building Agents**, a hackathon run 
 
 ## 👥 Team: Smile and Wave
 
-- **Sofija Korņejeva**, robotics engineer and software developer, team captain ([profile](https://hack.gdgriga.com/u/13))
-- **Marija Jupite**, IT student ([profile](https://hack.gdgriga.com/u/15))
-- **Cenk Pala** ([profile](https://hack.gdgriga.com/u/42))
-- **Ilma K** ([profile](https://hack.gdgriga.com/u/63))
+- **Sofija Korņejeva**, robotics engineer and software developer, team captain ([LinkedIn](https://www.linkedin.com/in/sofija-kornejeva-013ta/))
+- **Marija Jupite**, IT student ([LinkedIn](https://www.linkedin.com/in/marija-jupite-b06358356/))
+- **Cenk Pala** ([LinkedIn](https://www.linkedin.com/in/cenk-ege-pala-22442b445/))
+- **Ilma Kule** ([LinkedIn](https://www.linkedin.com/in/ilma-kule-13a872448/))
 - **Rostyslav Hrabenko** ([LinkedIn](https://www.linkedin.com/in/rostyslav-hrabenko-450829437/))
 
 <img width="938" height="528" alt="Screenshot 2026-11-03 173318" src="https://github.com/user-attachments/assets/c09bcbe6-0358-446b-b24f-dccf290f5508" />
