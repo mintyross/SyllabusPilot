@@ -1,171 +1,233 @@
-<div align="center">
+# 📅 SyllabusPilot
 
-# 📅 SyllabusPilot 🚀
 
-### **Turn messy course syllabi into an actionable Google Calendar study schedule in seconds.**
+### Turn any messy course syllabus into a study plan in your calendar.
 
-[![Gemini](https://img.shields.io/badge/Model-Gemini%203.8%20Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
-[![Framework](https://img.shields.io/badge/Framework-Google%20ADK-34A853?logo=google-cloud&logoColor=white)](https://github.com/google/agent-development-kit)
-[![Frontend](https://img.shields.io/badge/Frontend-React%2019%20%2B%20Vite%208-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Standard](https://img.shields.io/badge/Calendar-RFC%205545%20iCalendar-EA4335?logo=google-calendar&logoColor=white)](https://calendar.google.com)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
+<br>
+
+<table>
+  <tr>
+    <th width="50%">Before: a messy syllabus</th>
+    <th width="50%">After: a ready study calendar</th>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/6b25da36-f76b-425e-ad91-decc1e5d7d24" alt="A messy course syllabus" width="100%"></td>
+    <td><img src="https://github.com/user-attachments/assets/51679f1a-dccb-47fe-b759-c6efbab828c2" alt="A study plan in a calendar" width="100%"></td>
+  </tr>
+</table>
+
+**[Problem](#-the-problem) · [Solution](#-the-solution) · [How It Works](#-how-it-works) · [Quickstart](#-quickstart) · [Demo](#-demo) · [Team](#-team-smile-and-wave)**
 
 </div>
 
+---
+
 ## 📌 The Problem
 
-At the start of every semester, students are bombarded with **5 to 8 course syllabi**.
-- A 12-page PDF where the midterm date is buried on page 9.
-- A blurry phone photo of a lecture slide saying *"Essay due week 11"*.
-- An email from a professor with a broken plain-text table and drop-lowest grading policies.
+At the start of every semester, students receive five to eight syllabi. One is a 12-page PDF with the midterm on page 9. One is a photo of a lecture slide that says "Essay due week 11", with no date attached. One is a table pasted into an email, with the columns broken.
 
-**The result:** Most students never turn them into an actionable plan. They hear about midterms one week prior, or miss essays mentioned on page 9. Students who do plan waste hours manually copying dates into Google Calendar—only to repeat the entire process whenever a date shifts.
+Most students never turn these into a plan. They hear about the midterm a week before it happens, or they miss the essay because it was mentioned on page 9. Students who do plan spend an evening copying dates into a calendar, then repeat the work whenever a date moves.
+
+<img width="1111" height="643" alt="image" src="https://github.com/user-attachments/assets/b57e02a6-d55e-4c05-bb63-882396a88ce9" />
 
 ---
 
 ## 💡 The Solution
 
-**SyllabusPilot** is an intelligent academic planner agent powered by **Google Gemini 3.8 Flash** and the **Google Agent Development Kit (ADK)**:
+SyllabusPilot is an AI agent. You give it a syllabus in any shape: a PDF, pasted text, or a photo. It:
 
-1. 📥 **Drop any syllabus:** Accepts raw text, PDF documents, or photos of slides and handouts.
-2. 🔍 **Instant extraction:** Automatically identifies every graded item (exams, assignments, quizzes, papers), due dates, and grading percentage weights.
-3. 💬 **Personalized pacing:** Asks at most 1 to 3 quick clarifying questions (weekly study hours, preferred days/times, semester start date).
-4. 🧠 **Smart workload balancing:** Strategically assigns more prep sessions before high-stakes exams and term papers to eliminate cramming.
-5. 🗓️ **1-Click Google Calendar export:** Generates a standard RFC 5545 `plan.ics` calendar file with built-in 30-minute reminder alarms, ready to import directly into Google Calendar, Apple Calendar, or Outlook.
+1. **Finds every graded item**: exams, assignments, quizzes, labs, and papers, with their due dates and grade weights.
+2. **Shows what it found** in a table, so you can check the results.
+3. **Asks at most three short questions**, such as how many hours a week you can study.
+4. **Builds a week-by-week study plan**, with more preparation before major exams and papers.
+5. **Saves the plan as an `.ics` calendar file**, which imports into Google Calendar, Apple Calendar, or Outlook.
+
+<img width="1856" height="1035" alt="image" src="https://github.com/user-attachments/assets/3d0c854b-b8c5-4d95-bbba-5d0dc41858d8" />
+
+<img width="1557" height="627" alt="image" src="https://github.com/user-attachments/assets/f5c0a29b-09f1-40ee-afde-e086fcaecda3" />
 
 ---
 
-## ✨ Features
+## 🧭 How It Works
 
-- 📄 **Multimodal Ingestion:** Ingest raw text, 12-page PDFs, or photos of lecture slides.
-- 📊 **Graded Item Breakdown:** Clean summary table with categories, due dates, and grade weight validation (ensuring items sum to 100%).
-- ⚖️ **Weight Distribution Charts:** Visual representation of course grade allocation using interactive Recharts graphs.
-- 🎯 **Algorithmic Study Planning:** Distributes study hours across the semester, scheduling heavier prep blocks 1–2 weeks before major exams.
-- 🐍 **Native Python Tool Calling:** Generates standard RFC 5545 `.ics` calendar events using our `make_ics` tool function.
-- ⏰ **Deadline & Study Reminders:** Embedded `VALARM` notifications alert students 30 minutes before each study block and milestone deadline.
-- 🌓 **Modern Web Dashboard:** Full React 19 UI with dark/light mode, interactive calendar views, and instant `.ics` downloads.
+SyllabusPilot has two parts that do the same job in different ways.
+
+### Agent (Python, Google ADK)
+
+`syllabus_pilot/agent.py` defines a Google Agent Development Kit agent that uses Gemini. Its instructions are split into three files, so each one can be edited separately:
+
+- `prompts/extract.md` covers how to find graded items and build the table.
+- `prompts/questions.md` sets the three-question limit.
+- `prompts/plan.md` covers how to spread study sessions across the weeks.
+
+The agent calls five tools:
+
+- **`read_pdf`** extracts text from PDFs with pypdf.
+- **`normalize_date`** turns dates such as "Oct 3rd" or "Week 7" into ISO dates.
+- **`check_items`** confirms that grade weights add up to 100% and flags missing dates and duplicate items.
+- **`build_plan`** spreads preparation sessions across the weeks before each due date, giving exams and papers the most time.
+- **`make_ics`** writes an RFC 5545 calendar file.
+
+### Web App (TypeScript, React, Express)
+
+`server.ts` calls Gemini with a JSON schema, so the extracted items and the plan come back in a fixed format. The React interface lets you edit the table, answer the questions, view the plan in a calendar or a weekly view, and download `plan.ics`. The server runs `make_ics.py` to generate the calendar file.
+
+```mermaid
+flowchart LR
+    student["Student"]
+    gcal["Google Calendar"]
+    gemini[("Google Gemini API")]
+
+    subgraph WEB["Web App (npm run dev)"]
+        direction TB
+        ui["React UI<br/>src/App.tsx"]
+        server["Express server<br/>server.ts"]
+        pyics["make_ics.py<br/>run as subprocess"]
+        ui -->|"extract and plan requests"| server
+        server -->|"events as JSON"| pyics
+        pyics -->|"calendar text"| server
+        server -->|"plan.ics download"| ui
+    end
+
+    subgraph AGENT["Google ADK Agent (adk web)"]
+        direction TB
+        root["syllabus_pilot agent<br/>agent.py"]
+        prompts["prompts/<br/>extract.md, questions.md, plan.md"]
+        subgraph TOOLS["Python tools"]
+            direction TB
+            t1["read_pdf"]
+            t2["normalize_date"]
+            t3["check_items"]
+            t4["build_plan"]
+            t5["make_ics"]
+        end
+        prompts --> root
+        root --> TOOLS
+    end
+
+    student -->|"syllabus: PDF, text or photo"| ui
+    server -->|"structured requests"| gemini
+    gemini -->|"items, questions, plan"| server
+    root -->|"model calls"| gemini
+    t5 -->|"plan.ics file"| student
+    student -->|"imports plan.ics"| gcal
+```
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **AI Model:** `gemini-3.8-flash` (Google AI Studio)
-- **Agent Framework:** [Google Agent Development Kit (ADK)](https://github.com/google/agent-development-kit)
-- **Frontend:** React 19, TypeScript, Tailwind CSS, Vite 8, Lucide Icons, Recharts
-- **Backend:** Express.js, Node.js, `@google/genai`
-- **Core Calendar Engine:** Python 3.10+ (`make_ics.py`, RFC 5545 standard)
+- **Agent:** Python 3.10+, Google Agent Development Kit (ADK), Gemini, pypdf, ics
+- **Web app:** React 19, TypeScript, Vite, Tailwind CSS, Recharts, Express, `@google/genai`
 
 ---
 
-## 🚀 Quickstart & Setup
+## 🚀 Quickstart
 
 ### Prerequisites
-- **Node.js** (v20 or newer recommended)
-- **Python** (v3.10 or newer)
-- A free **Gemini API Key** from [Google AI Studio](https://aistudio.google.com/apikey)
+
+- Node.js v20 or newer
+- Python 3.10 or newer
+- A free Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
 
 ### 1. Clone the repository
+
 ```bash
 git clone https://github.com/mintyross/SyllabusPilot.git
 cd SyllabusPilot
 ```
 
-### 2. Configure Environment Variables
+### 2. Run the web app
+
+```bash
+npm install --legacy-peer-deps
+```
+
 Create a `.env` file in the root directory:
+
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 PORT=3000
 ```
 
-### 3. Install Dependencies
-```bash
-# Install frontend & server dependencies
-npm install --legacy-peer-deps
+Start the app:
 
-# (Optional) Install Python test & ADK tools
-pip install -r requirements.txt
-```
-
-### 4. Run the SyllabusPilot Web App
 ```bash
 npm run dev
 ```
-Open **[http://localhost:3000](http://localhost:3000)** in your browser!
 
----
+Open [http://localhost:3000](http://localhost:3000).
 
-## 💻 Alternative: Running via Google ADK CLI
+### 3. Run the agent with the ADK CLI (optional)
 
-You can also run SyllabusPilot directly through the official Google Agent Development Kit CLI:
-
-1. Create `syllabus_pilot/.env` (next to `agent.py`) with:
-   ```env
-   GOOGLE_GENAI_USE_VERTEXAI=FALSE
-   GOOGLE_API_KEY=your_gemini_api_key_here
-   ```
-2. From the **repo root** (the folder that *contains* `syllabus_pilot/`, not from inside it):
-   ```powershell
-   py -m venv venv
-   venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
-   pip install -r requirements.txt
-   adk web
-   ```
-   On Windows you can also just double-click `run_agent.bat` after the first setup.
-3. Visit **[http://localhost:8000](http://localhost:8000)** and select `syllabus_pilot` from the menu.
-
-Run the tests with `python -m pytest` from the repo root.
-
----
-
-## 📂 Project Structure
-
-```text
-SyllabusPilot/
-├── src/                          # React 19 Frontend
-│   ├── App.tsx                   # Main Dashboard (Input, Review, Plan views)
-│   ├── types.ts                  # Shared TypeScript interfaces
-│   └── data/messySyllabus.ts     # Preloaded messy CS & Bio test syllabi
-├── syllabus_pilot/               # Google ADK Agent
-│   ├── agent.py                  # Agent definitions & tool registration
-│   ├── prompts/                  # Modular agent instructions
-│   │   ├── extract.md            # Extraction rules & table structure
-│   │   ├── questions.md          # Strict <=3 question constraints
-│   │   └── plan.md               # Week-by-week study scheduling logic
-│   └── tools/                    # Deterministic Python Tools
-│       ├── calendar.py           # make_ics() calendar exporter
-│       ├── checks.py             # check_items() weight & duplicate validator
-│       ├── dates.py              # normalize_date() date string parser
-│       ├── planner.py            # build_plan() workload distributor
-│       └── pdf.py                # read_pdf() document parser
-├── samples/                      # Sample syllabi & ground-truth expected.json
-├── tests/                        # Automated unit tests (pytest)
-├── make_ics.py                   # Standalone RFC 5545 Python tool
-├── server.ts                     # Express + Vite backend server
-├── plan.ics                      # Generated output calendar file
-└── README.md
+```bash
+pip install -r requirements.txt
+cd syllabus_pilot
+adk web
 ```
 
+Open [http://localhost:8000](http://localhost:8000) and select `syllabus_pilot`.
+
 ---
 
-## 📅 Importing `plan.ics` into Google Calendar
+## 🎬 Demo
 
-1. Open **[Google Calendar](https://calendar.google.com)**.
-2. Click the **Gear icon ⚙️** (Top Right) > **Settings**.
-3. In the left navigation, select **Import & export**.
+1. Upload the messiest syllabus you can find.
+2. Answer one question, such as "How many hours a week can you study?"
+3. Review the study plan.
+4. Import `plan.ics` into Google Calendar.
+
+<img width="1538" height="847" alt="image" src="https://github.com/user-attachments/assets/97e25da1-5ef1-46aa-be37-354d41d6c921" />
+
+<img width="1856" height="987" alt="image" src="https://github.com/user-attachments/assets/42d54f05-5465-4fd6-a409-804250a74c7c" />
+
+### Importing `plan.ics` into Google Calendar
+
+1. Open [Google Calendar](https://calendar.google.com).
+2. Click the gear icon in the top right, then **Settings**.
+3. In the left menu, select **Import & export**.
 4. Click **Select file from your computer** and choose `plan.ics`.
-5. Click **Import** — your study blocks and exam milestones appear instantly!
+5. Click **Import**. Your study blocks and deadlines will appear.
 
 ---
 
-## 🏆 Hackathon Submission Details
+## 🔮 Future Work
 
-- **Project Title:** SyllabusPilot
-- **One-line Pitch:** Turn messy course syllabi into an actionable Google Calendar study schedule in seconds.
-- **Challenge Track:** AI Agents / Student Productivity
-- **Live Demo Video / Pitch Flow (5 minutes):**
-  1. **The Problem (1 min):** Present an ugly 12-page PDF / slide photo with buried exam dates.
-  2. **The Extraction (1.5 min):** Upload syllabus to SyllabusPilot -> instant extraction table + weight chart.
-  3. **The Planning (1 min):** Answer 1 question (*"I have 6 hours/week"*).
-  4. **The Calendar Sync (1.5 min):** 1-click download `plan.ics` -> import into Google Calendar -> view color-coded study sessions & reminder alarms.
+- Plan several courses at once, spreading busy weeks across them.
+- Reschedule the plan when life changes, for example "I was sick for three days."
+- Send a short reminder message for each study day.
+- Sync directly with Google Calendar through its API, instead of importing a file.
+- Support more date formats and more languages.
+- Save syllabi and plans so students can return to them later.
+
+---
+
+## 🏆 Hackathon
+
+SyllabusPilot was built at **Coding with AI: Building Agents**, a hackathon run by GDG on Campus Riga Technical University (Google Developer Group Riga) on 2 November 2026 at RTU, Riga.
+
+- **Challenge:** 01 (Beginner): SyllabusPilot
+- **Track:** AI Agents / Student Productivity
+
+---
+
+## 👥 Team: Smile and Wave
+
+- **Sofija Korņejeva**, robotics engineer and software developer, team captain ([profile](https://hack.gdgriga.com/u/13))
+- **Marija Jupite**, IT student ([profile](https://hack.gdgriga.com/u/15))
+- **Cenk Pala** ([profile](https://hack.gdgriga.com/u/42))
+- **Ilma K** ([profile](https://hack.gdgriga.com/u/63))
+- **Rostyslav Hrabenko** ([LinkedIn](https://www.linkedin.com/in/rostyslav-hrabenko-450829437/))
+
+<img width="938" height="528" alt="Screenshot 2026-11-03 173318" src="https://github.com/user-attachments/assets/c09bcbe6-0358-446b-b24f-dccf290f5508" />
+
+---
+
+## 📄 License
+
+Released under the MIT License. See [LICENSE](LICENSE).
